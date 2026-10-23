@@ -17,16 +17,16 @@
 | A | 自研引导：MBR(stage1) → stage2 → 长模式 → 解析内核 ELF64 → 跳转 | ✅ 完成 |
 | B | 内核核心：GDT/IDT/中断 → PMM → VMM(四级页表) → 堆 → 抢占式调度 → 系统调用 | ✅ 完成 |
 | C | 驱动：串口 / 键盘 / PIT 时钟 / VGA 文本 | ✅ 完成 |
-| D | 内核 Shell（16 条命令） | ✅ 完成 |
+| D | 内核 Shell（初版 16 条，现 34 条） | ✅ 完成 |
 | E | Unicorn 测试台：假 BIOS + 全链路实跑验证 | ✅ 完成 |
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
-| H | 存储与文件系统 | ⬜ 待办 |
+| H | 存储与文件系统 | ✅ 核心完成（ATA/FYXFS/VFS/断电测试） |
 | I | 网络栈 | ⬜ 待办 |
 | J | 图形栈与桌面环境（"比 Win10 好看"） | ⬜ 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | ⬜ 待办 |
 | L | FYX IDE | ⬜ 待办 |
-| M | 系统还原 | ⬜ 待办 |
+| M | 系统还原 | ✅ 核心完成（CoW 快照/回滚/保留 `/home`） |
 
 验证方式（阶段 E 已建立，后续沿用）：
 
@@ -41,8 +41,9 @@ make image
 
 `--mode full-boot` 从**第一条 BIOS 指令**开始跑：INT 13h 读盘 → MBR → stage2
 （A20/E820/ELF 装载/建页表）→ 长模式 → 内核 banner → boot_info → PMM/VMM/堆
-→ 8 项自检 → 抢占调度演示 → 用户 init（ring 3、fork/exec/wait、管道）
-→ Shell → 正常关机。`--keys-after` 确保键盘脚本在 init 完成后才注入。
+→ 9 项自检 → 抢占调度演示 → ATA/FYXFS → 从 `/bin/init` 装载用户 init
+（ring 3、文件 I/O、fork/exec/wait、管道）→ Shell → 正常关机。
+`--keys-after` 确保键盘脚本在 init 完成后才注入。
 
 ---
 
@@ -60,11 +61,11 @@ make image
 **验收**：测试台上跑起一个用户态 `/bin/init`，它能 `fork`+`exec` 出第二个
 用户程序，两个进程靠管道通信。
 
-**当前实现（已实跑通过）**：内嵌静态 ELF64 init 在 ring 3 启动；独立 PML4、
-用户栈/argv/envp/auxv、每线程系统调用栈、`fork`/`exec`/`wait`/`exit`/`brk`、
-fd 管道均已在 full-boot 与 quick 台架验证。fork 暂为全量复制、init 暂由
-`.incbin` 内嵌、管道等待暂为 tick 轮询；CoW、真实文件路径、条件变量及完整
-libc 留到后续阶段，不把它们冒充为已完成。
+**当前实现（已实跑通过）**：静态 ELF64 init 从持久化 `/bin/init` 读取并在
+ring 3 启动；独立 PML4、用户栈/argv/envp/auxv、每线程系统调用栈、
+`fork`/`exec`/`wait`/`exit`/`brk`、管道与文件 fd 均已在 full-boot 与 quick
+台架验证。fork 暂为全量复制、管道等待暂为 tick 轮询；进程 CoW、条件变量、
+完整用户指针检查及完整 libc 留到后续，不把它们冒充为已完成。
 
 ### 阶段 H — 存储与文件系统
 
@@ -76,6 +77,12 @@ libc 留到后续阶段，不把它们冒充为已完成。
 - VFS：统一的 `vnode` 接口，支持 `procfs` / `sysfs` / `devfs` / `tmpfs`
 
 **验收**：格式化、挂载、读写、卸载、断电一致性测试（台架上模拟掉电）。
+
+**当前实现（已实跑通过）**：自研 ATA PIO、MBR 系统分区、FYXFS v1、VFS
+文件对象及 6 个文件系统调用均已落地；`make test-storage` 验证跨重启、
+卸载/挂载和 4 个 ATA 写点断电。当前是固定 40 节点/16 快照的追加式 CoW 根，
+尚未完成旧块回收、B 树、压缩/去重、GPT、AHCI/NVMe 及 proc/sys/dev/tmpfs。
+详见 [`docs/design/fyxfs.md`](design/fyxfs.md)。
 
 ### 阶段 I — 网络栈
 
@@ -106,6 +113,10 @@ Rust / Go / Zig / Python / Node 等通过统一接口接入 → 移植 git。
 
 见 [`docs/design/system-restore.md`](design/system-restore.md)。
 
+**当前实现（已实跑通过）**：O(1) CoW 快照、可跨重启的事务式回滚、快照历史
+保留，以及默认只恢复系统并保留当前 `/home`；`rollback ID all` 支持整卷恢复。
+A/B 内核槽、独立救援镜像、认证、自动保留策略及包管理器联动仍是后续目标。
+
 ---
 
 ## 2. 贯穿全局的硬指标
@@ -114,7 +125,7 @@ Rust / Go / Zig / Python / Node 等通过统一接口接入 → 移植 git。
 |---|---|---|
 | 冷启动 | ≤ 3 秒（NVMe） | 并行驱动探测、延迟初始化、内核镜像常驻压缩 |
 | 基础安装体积 | ≤ 2 GiB | 对比 Win10 的 20+ GiB；靠 CoW + 压缩 + 按需组件 |
-| 内核二进制 | ≤ 4 MiB | 当前 0.1.0-phase1 为 ~85 KiB（未压缩、无优化） |
+| 内核二进制 | ≤ 4 MiB | 当前存储版约 155 KiB（未压缩、含调试信息） |
 | 空闲内存占用 | ≤ 400 MiB | 桌面环境常驻 |
 | 输入延迟 | ≤ 1 帧（120Hz 下 ≤ 8.3 ms） | 合成器直写、输入线程优先级最高 |
 | 兼容性 | POSIX 完整 + Win32 常用子集 | 见 `docs/spec/fyx-cli.md` |

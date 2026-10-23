@@ -47,6 +47,14 @@ enum fyx_syscall {
     SYS_WRITE       = 0x1019,   /* (int fd, const void *buf, size_t len) */
     SYS_CLOSE       = 0x101A,   /* (int fd) */
 
+    /* ---- 阶段 H：持久化文件与目录 ---- */
+    SYS_OPEN        = 0x101B,   /* (const char *path, u32 flags, u32 mode) */
+    SYS_LSEEK       = 0x101C,   /* (int fd, i64 offset, u32 whence) */
+    SYS_STAT        = 0x101D,   /* (const char *path, struct vfs_stat *out) */
+    SYS_MKDIR       = 0x101E,   /* (const char *path, u32 mode) */
+    SYS_UNLINK      = 0x101F,   /* (const char *path) */
+    SYS_SYNC        = 0x1020,   /* () */
+
     SYS_MAX
 };
 
@@ -58,6 +66,12 @@ long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5, u64 a6
 
 /* 供内核代码直接调用的实现（避免绕一圈 syscall 指令） */
 long sys_log_write(const char *buf, size_t len);
+long sys_open(const char *path, u32 flags, u32 mode);
+long sys_lseek(int fd, i64 offset, u32 whence);
+long sys_stat(const char *path, void *out);
+long sys_mkdir(const char *path, u32 mode);
+long sys_unlink(const char *path);
+long sys_sync(void);
 u64  syscall_count(void);
 u64  syscall_unknown_count(void);
 

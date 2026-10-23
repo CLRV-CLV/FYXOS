@@ -15,6 +15,7 @@
  *   keyboard/pit       设备驱动（依赖 idt + pic）
  *   syscall_init       SYSCALL/SYSRET MSR（依赖 gdt + cpu）
  *   sched_init/start   抢占式调度（依赖 idt + pit + heap）
+ *   storage_init       ATA → 分区 → FYXFS/VFS（在从盘装载 init 之前）
  */
 #include <fyxos/kernel.h>
 #include <fyxos/lib.h>
@@ -24,6 +25,7 @@
 #include <fyxos/x86_64.h>
 #include <fyxos/boot_info.h>
 #include <fyxos/process.h>
+#include <fyxos/storage.h>
 
 extern u8 _kernel_end[], _kernel_phys_end[];
 extern u8 _text_start[], _text_end[], _bss_start[], _bss_end[];
@@ -203,11 +205,13 @@ void kmain(struct fyx_boot_info *bi)
     run_scheduler_demo();
 
     /*
-     * 阶段 G：拉起第一个用户进程。
+     * 阶段 G/H：存储就绪后，从 /bin/init 拉起第一个用户进程。
      * init 完成验收后退出，调度器会把 CPU 交回下面的内核 Shell；
      * 这样用户态测试与原有的救援 Shell 可以共存。
      */
     process_init();
+    if (storage_init() != 0)
+        panic("storage: 无法启动持久化存储栈");
     process_start_init();
 
     kprintf("\n[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令\n");

@@ -1,5 +1,10 @@
 # FYXOS 系统还原设计
 
+> **实现状态（2026-10-23）**：CoW 快照、跨重启回滚、快照历史保留和默认
+> 保留 `/home` 已经实现并通过 ATA 断电测试，详见
+> [`fyxfs.md`](fyxfs.md)。本文其余内容仍包含长期目标；B 树、内容寻址、A/B
+> 内核槽、独立救援镜像、认证和自动策略不应被视为已经交付。
+>
 > 目标：类似 Windows"系统还原"，但**更快、更彻底、更可控** ——
 > 快照是 O(1) 的、可随时回滚到任意历史点、可只回滚系统而不动个人文件、
 > 且**崩溃后一定能进得去**。
@@ -106,7 +111,7 @@ fyx-rescue> list snapshots
 fyx-rescue> rollback system --to=T5
 fyx-rescue> check disk /            # 校验并修复
 fyx-rescue> mount @home /mnt        # 挂载个人文件以便拷出
-fyx-rescue> shell                    # 进入完整内核 Shell（当前 16 条命令）
+fyx-rescue> shell                    # 进入完整内核 Shell（当前 34 条命令）
 ```
 
 3. **离线还原介质**：`fyx image --rescue` 可生成 USB 镜像；

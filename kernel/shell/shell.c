@@ -13,6 +13,9 @@
 #include <fyxos/sched.h>
 #include <fyxos/syscall.h>
 #include <fyxos/x86_64.h>
+#include <fyxos/vfs.h>
+#include <fyxos/storage.h>
+#include <fyxos/block.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -79,6 +82,20 @@ static int cmd_clear(int argc, char **argv);
 static int cmd_reboot(int argc, char **argv);
 static int cmd_shutdown(int argc, char **argv);
 static int cmd_exit(int argc, char **argv);
+static int cmd_ls(int argc, char **argv);
+static int cmd_cat(int argc, char **argv);
+static int cmd_write(int argc, char **argv);
+static int cmd_mkdir(int argc, char **argv);
+static int cmd_rm(int argc, char **argv);
+static int cmd_cp(int argc, char **argv);
+static int cmd_stat(int argc, char **argv);
+static int cmd_df(int argc, char **argv);
+static int cmd_fsck(int argc, char **argv);
+static int cmd_sync(int argc, char **argv);
+static int cmd_mount(int argc, char **argv);
+static int cmd_unmount(int argc, char **argv);
+static int cmd_snapshot(int argc, char **argv);
+static int cmd_rollback(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
     &(const struct command){ "help",     "help [命令]",       "显示命令列表或某个命令的用法", cmd_help },
@@ -97,6 +114,24 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "reboot",   "reboot",            "重启",                          cmd_reboot },
     &(const struct command){ "shutdown", "shutdown",          "关机",                          cmd_shutdown },
     &(const struct command){ "exit",     "exit",              "退出 Shell 并停机",             cmd_exit },
+    &(const struct command){ "ls",       "ls [路径]",         "列出目录（dir 为兼容别名）",     cmd_ls },
+    &(const struct command){ "dir",      "dir [路径]",        "ls 的跨系统命令别名",            cmd_ls },
+    &(const struct command){ "cat",      "cat <文件>",        "显示文件内容（type 为别名）",    cmd_cat },
+    &(const struct command){ "type",     "type <文件>",       "cat 的跨系统命令别名",           cmd_cat },
+    &(const struct command){ "write",    "write <文件> <文本>", "原子替换文件内容",             cmd_write },
+    &(const struct command){ "mkdir",    "mkdir <路径>",      "创建目录（md 为别名）",          cmd_mkdir },
+    &(const struct command){ "md",       "md <路径>",         "mkdir 的跨系统命令别名",         cmd_mkdir },
+    &(const struct command){ "rm",       "rm <路径>",         "删除空目录或文件（del 为别名）", cmd_rm },
+    &(const struct command){ "del",      "del <路径>",        "rm 的跨系统命令别名",            cmd_rm },
+    &(const struct command){ "cp",       "cp <源> <目标>",    "复制文件",                       cmd_cp },
+    &(const struct command){ "stat",     "stat <路径>",       "显示节点、大小与 CRC32",         cmd_stat },
+    &(const struct command){ "df",       "df",                "显示 FYXFS 空间与事务状态",      cmd_df },
+    &(const struct command){ "fsck",     "fsck",              "校验根、快照和文件数据",         cmd_fsck },
+    &(const struct command){ "sync",     "sync",              "把 ATA 写缓存刷入介质",          cmd_sync },
+    &(const struct command){ "mount",    "mount",             "重新挂载系统分区",               cmd_mount },
+    &(const struct command){ "unmount",  "unmount",           "卸载系统分区",                   cmd_unmount },
+    &(const struct command){ "snapshot", "snapshot [create 名]", "列出或创建 CoW 快照",         cmd_snapshot },
+    &(const struct command){ "rollback", "rollback <id> [all]", "回滚；默认保留 /home",          cmd_rollback },
 };
 
 static const struct command *find_command(const char *name)
@@ -337,6 +372,256 @@ static int cmd_shutdown(int argc, char **argv)
 static int cmd_exit(int argc, char **argv)
 {
     return cmd_shutdown(argc, argv);
+}
+
+/* ========================== 文件与系统还原 ============================== */
+static int cmd_ls(int argc, char **argv)
+{
+    const char *path = argc > 1 ? argv[1] : "/";
+    struct vfs_stat st;
+    int rc = vfs_stat(path, &st);
+    if (rc != 0) {
+        kprintf("ls: %s: 错误 %d\n", path, rc);
+        return 1;
+    }
+    if (st.type != FYXFS_NODE_DIR) {
+        kprintf("%s  %llu 字节\n", path, (unsigned long long)st.size);
+        return 0;
+    }
+    kprintf("%s：\n", path);
+    for (u32 i = 0;; i++) {
+        struct fyxfs_node_info info;
+        rc = vfs_getdents(path, i, &info);
+        if (rc == -FYX_ENOENT)
+            break;
+        if (rc != 0)
+            return 1;
+        kprintf("  %-24s %-4s %8llu 字节  node=%u\n", info.name,
+                info.type == FYXFS_NODE_DIR ? "dir" : "file",
+                (unsigned long long)info.size, info.node);
+    }
+    return 0;
+}
+
+static int cmd_cat(int argc, char **argv)
+{
+    if (argc < 2) {
+        kprintf("用法: cat <文件>\n");
+        return 1;
+    }
+    struct fyx_file *file;
+    int rc = vfs_open(argv[1], VFS_O_RDONLY, &file);
+    if (rc != 0) {
+        kprintf("cat: %s: 错误 %d\n", argv[1], rc);
+        return 1;
+    }
+    char buf[512];
+    long n;
+    char last = 0;
+    while ((n = vfs_file_read(file, buf, sizeof(buf))) > 0) {
+        console_write(buf, (size_t)n);
+        last = buf[n - 1];
+    }
+    vfs_file_close(file);
+    if (last && last != '\n')
+        console_putc('\n');
+    return n < 0 ? 1 : 0;
+}
+
+static int cmd_write(int argc, char **argv)
+{
+    if (argc < 3) {
+        kprintf("用法: write <文件> <文本>\n");
+        return 1;
+    }
+    char buf[1024];
+    size_t used = 0;
+    for (int i = 2; i < argc; i++) {
+        size_t n = strlen(argv[i]);
+        if (used + n + 2 > sizeof(buf)) {
+            kprintf("write: 文本过长\n");
+            return 1;
+        }
+        if (i > 2)
+            buf[used++] = ' ';
+        memcpy(buf + used, argv[i], n);
+        used += n;
+    }
+    buf[used++] = '\n';
+
+    /* fyxemu 可用这个普通日志标记在随后的任意 ATA 写点模拟断电。 */
+    kprintf("[storage-write] %s\n", argv[1]);
+    int rc = vfs_write_file(argv[1], buf, used);
+    if (rc == 0)
+        rc = vfs_sync();
+    if (rc != 0) {
+        kprintf("write: 错误 %d\n", rc);
+        return 1;
+    }
+    kprintf("已原子写入 %s（%u 字节）\n", argv[1], (unsigned)used);
+    return 0;
+}
+
+static int cmd_mkdir(int argc, char **argv)
+{
+    if (argc < 2)
+        return 1;
+    int rc = vfs_mkdir(argv[1]);
+    if (rc != 0)
+        kprintf("mkdir: 错误 %d\n", rc);
+    return rc != 0;
+}
+
+static int cmd_rm(int argc, char **argv)
+{
+    if (argc < 2)
+        return 1;
+    int rc = vfs_unlink(argv[1]);
+    if (rc != 0)
+        kprintf("rm: 错误 %d\n", rc);
+    return rc != 0;
+}
+
+static int cmd_cp(int argc, char **argv)
+{
+    if (argc < 3) {
+        kprintf("用法: cp <源> <目标>\n");
+        return 1;
+    }
+    void *data;
+    size_t size;
+    int rc = vfs_read_file(argv[1], &data, &size);
+    if (rc == 0) {
+        rc = vfs_write_file(argv[2], data, size);
+        kfree(data);
+    }
+    if (rc != 0)
+        kprintf("cp: 错误 %d\n", rc);
+    return rc != 0;
+}
+
+static int cmd_stat(int argc, char **argv)
+{
+    if (argc < 2)
+        return 1;
+    struct vfs_stat st;
+    int rc = vfs_stat(argv[1], &st);
+    if (rc != 0) {
+        kprintf("stat: 错误 %d\n", rc);
+        return 1;
+    }
+    kprintf("%s: node=%u type=%s size=%llu crc32=0x%08x\n", argv[1],
+            st.node, st.type == FYXFS_NODE_DIR ? "dir" : "file",
+            (unsigned long long)st.size, st.crc32);
+    return 0;
+}
+
+static int cmd_df(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    struct fyxfs_stats st;
+    vfs_stats(&st);
+    struct block_stats io;
+    block_get_stats(&io);
+    kprintf("FYXFS generation=%llu root=%u\n",
+            (unsigned long long)st.generation, st.active_root);
+    kprintf("  块区: 追加分配 %u / %u（每块 4 KiB）\n",
+            st.next_block, st.total_blocks);
+    kprintf("  节点 %u，快照 %u；ATA 读/写 %llu/%llu 扇区，flush %llu，错误 %llu\n",
+            st.nodes, st.snapshots,
+            (unsigned long long)io.read_sectors,
+            (unsigned long long)io.write_sectors,
+            (unsigned long long)io.flushes,
+            (unsigned long long)io.io_errors);
+    return 0;
+}
+
+static int cmd_fsck(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    u32 errors = 0;
+    int rc = vfs_check(false, &errors);
+    return rc != 0 || errors != 0;
+}
+
+static int cmd_sync(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    int rc = vfs_sync();
+    if (rc == 0)
+        kprintf("已同步到 ATA 介质\n");
+    return rc != 0;
+}
+
+static int cmd_mount(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    if (vfs_mounted()) {
+        kprintf("系统分区已经挂载\n");
+        return 0;
+    }
+    int rc = storage_mount();
+    if (rc != 0)
+        kprintf("mount: 错误 %d\n", rc);
+    return rc != 0;
+}
+
+static int cmd_unmount(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    int rc = storage_unmount();
+    if (rc != 0)
+        kprintf("unmount: 错误 %d（可能有打开的文件）\n", rc);
+    return rc != 0;
+}
+
+static int cmd_snapshot(int argc, char **argv)
+{
+    if (argc > 1 && strcmp(argv[1], "create") == 0) {
+        const char *name = argc > 2 ? argv[2] : "manual";
+        u64 id;
+        int rc = vfs_snapshot_create(name, &id);
+        if (rc == 0)
+            kprintf("快照 #%llu 已创建\n", (unsigned long long)id);
+        else
+            kprintf("snapshot: 错误 %d\n", rc);
+        return rc != 0;
+    }
+    kprintf("ID   generation   root       名称\n");
+    for (u32 i = 0;; i++) {
+        struct fyxfs_snapshot_info info;
+        int rc = vfs_snapshot_get(i, &info);
+        if (rc == -FYX_ENOENT)
+            break;
+        if (rc != 0)
+            return 1;
+        kprintf("#%-3llu %-12llu %-10u %s\n",
+                (unsigned long long)info.id,
+                (unsigned long long)info.generation,
+                info.root_block, info.name);
+    }
+    return 0;
+}
+
+static int cmd_rollback(int argc, char **argv)
+{
+    if (argc < 2) {
+        kprintf("用法: rollback <id> [all]；默认只回滚系统并保留 /home\n");
+        return 1;
+    }
+    u64 id = strtoul(argv[1], NULL, 0);
+    bool all = argc > 2 && strcmp(argv[2], "all") == 0;
+    int rc = vfs_snapshot_rollback(id, !all);
+    if (rc == 0)
+        rc = vfs_sync();
+    if (rc != 0)
+        kprintf("rollback: 错误 %d\n", rc);
+    return rc != 0;
 }
 
 /* ============================== 命令执行 ================================ */

@@ -11,7 +11,7 @@
  *   - 最后一个写端关闭后，读端把剩余数据读完再返回 0（EOF）；
  *   - 最后一个端点关闭后释放管道对象。
  *
- * TODO: 阶段 H 用统一的 file/vnode 与条件变量替换轮询睡眠。
+ * fd 已与 VFS 文件统一分派；剩余 TODO 是用条件变量替换轮询睡眠。
  */
 #include <fyxos/pipe.h>
 #include <fyxos/kernel.h>
@@ -19,6 +19,7 @@
 #include <fyxos/mm.h>
 #include <fyxos/sched.h>
 #include <fyxos/sync.h>
+#include <fyxos/vfs.h>
 
 #define PIPE_CAPACITY 512u
 
@@ -37,7 +38,8 @@ static struct fyx_pipe *fd_pipe(struct process *p, int fd, u8 required)
     if (!p || fd < 0 || fd >= PROC_MAX_FDS)
         return NULL;
     struct fyx_fd *f = &p->fds[fd];
-    if (!f->pipe || (f->flags & required) != required)
+    if (f->type != FYX_FD_PIPE || !f->pipe ||
+        (f->flags & required) != required)
         return NULL;
     return f->pipe;
 }
@@ -69,7 +71,7 @@ long sys_pipe(int *fds)
 
     int read_fd = -1, write_fd = -1;
     for (int i = 0; i < PROC_MAX_FDS; i++) {
-        if (p->fds[i].pipe)
+        if (p->fds[i].type != FYX_FD_NONE)
             continue;
         if (read_fd < 0)
             read_fd = i;
@@ -89,8 +91,10 @@ long sys_pipe(int *fds)
     pipe->writers = 1;
 
     p->fds[read_fd].pipe = pipe;
+    p->fds[read_fd].type = FYX_FD_PIPE;
     p->fds[read_fd].flags = FYX_FD_READ;
     p->fds[write_fd].pipe = pipe;
+    p->fds[write_fd].type = FYX_FD_PIPE;
     p->fds[write_fd].flags = FYX_FD_WRITE;
 
     fds[0] = read_fd;
@@ -98,17 +102,27 @@ long sys_pipe(int *fds)
     return 0;
 }
 
+static void fd_clear(struct fyx_fd *fd)
+{
+    fd->pipe = NULL;
+    fd->file = NULL;
+    fd->type = FYX_FD_NONE;
+    fd->flags = 0;
+}
+
 long sys_close(int fd)
 {
     struct process *p = current_process();
-    if (!p || fd < 0 || fd >= PROC_MAX_FDS || !p->fds[fd].pipe)
-        return -FYX_EINVAL;
+    if (!p || fd < 0 || fd >= PROC_MAX_FDS ||
+        p->fds[fd].type == FYX_FD_NONE)
+        return -FYX_EBADF;
 
-    struct fyx_pipe *pipe = p->fds[fd].pipe;
-    u8 flags = p->fds[fd].flags;
-    p->fds[fd].pipe = NULL;
-    p->fds[fd].flags = 0;
-    pipe_release_endpoint(pipe, flags);
+    struct fyx_fd entry = p->fds[fd];
+    fd_clear(&p->fds[fd]);
+    if (entry.type == FYX_FD_PIPE)
+        pipe_release_endpoint(entry.pipe, entry.flags);
+    else if (entry.type == FYX_FD_FILE)
+        return vfs_file_close(entry.file);
     return 0;
 }
 
@@ -117,13 +131,14 @@ void pipe_close_all(struct process *p)
     if (!p)
         return;
     for (int i = 0; i < PROC_MAX_FDS; i++) {
-        if (!p->fds[i].pipe)
+        struct fyx_fd entry = p->fds[i];
+        if (entry.type == FYX_FD_NONE)
             continue;
-        struct fyx_pipe *pipe = p->fds[i].pipe;
-        u8 flags = p->fds[i].flags;
-        p->fds[i].pipe = NULL;
-        p->fds[i].flags = 0;
-        pipe_release_endpoint(pipe, flags);
+        fd_clear(&p->fds[i]);
+        if (entry.type == FYX_FD_PIPE)
+            pipe_release_endpoint(entry.pipe, entry.flags);
+        else if (entry.type == FYX_FD_FILE)
+            vfs_file_close(entry.file);
     }
 }
 
@@ -133,13 +148,19 @@ void pipe_clone_fds(struct process *child, const struct process *parent)
         return;
 
     for (int i = 0; i < PROC_MAX_FDS; i++) {
-        struct fyx_pipe *pipe = parent->fds[i].pipe;
-        if (!pipe)
+        const struct fyx_fd *source = &parent->fds[i];
+        if (source->type == FYX_FD_NONE)
             continue;
-        u8 flags = parent->fds[i].flags;
-        child->fds[i].pipe = pipe;
-        child->fds[i].flags = flags;
+        child->fds[i] = *source;
+        if (source->type == FYX_FD_FILE) {
+            vfs_file_ref(source->file);
+            continue;
+        }
+        if (source->type != FYX_FD_PIPE || !source->pipe)
+            continue;
 
+        struct fyx_pipe *pipe = source->pipe;
+        u8 flags = source->flags;
         u64 irq = irq_save_disable();
         spin_lock(&pipe->lock);
         if (flags & FYX_FD_READ)
@@ -154,9 +175,12 @@ void pipe_clone_fds(struct process *child, const struct process *parent)
 long sys_fd_read(int fd, void *buf, size_t len)
 {
     struct process *p = current_process();
+    if (p && fd >= 0 && fd < PROC_MAX_FDS &&
+        p->fds[fd].type == FYX_FD_FILE)
+        return vfs_file_read(p->fds[fd].file, buf, len);
     struct fyx_pipe *pipe = fd_pipe(p, fd, FYX_FD_READ);
     if (!pipe)
-        return -FYX_EINVAL;
+        return -FYX_EBADF;
     if (len == 0)
         return 0;
     if (!buf)
@@ -192,9 +216,12 @@ long sys_fd_read(int fd, void *buf, size_t len)
 long sys_fd_write(int fd, const void *buf, size_t len)
 {
     struct process *p = current_process();
+    if (p && fd >= 0 && fd < PROC_MAX_FDS &&
+        p->fds[fd].type == FYX_FD_FILE)
+        return vfs_file_write(p->fds[fd].file, buf, len);
     struct fyx_pipe *pipe = fd_pipe(p, fd, FYX_FD_WRITE);
     if (!pipe)
-        return -FYX_EINVAL;
+        return -FYX_EBADF;
     if (len == 0)
         return 0;
     if (!buf)

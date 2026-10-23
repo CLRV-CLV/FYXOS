@@ -9,8 +9,9 @@
  *     多线程（pthread 语义）等有了用户态线程库再做。
  *   - fork 用**全量复制**而不是写时复制：逻辑简单、不会错。等页故障处理
  *     完善后改成 CoW，届时复制一次只需标记只读 + 共享帧。
- *   - exec 不读文件系统：程序镜像以内嵌 blob（.incbin）形式随内核提供，
- *     按名字索引。等 FYXFS 落地后换成真正的路径查找。
+ *   - exec 已通过 VFS 按路径读取 ELF；内嵌 blob 只作为首启安装种子。
+ *     用户指针目前仍主要在信任的最小 init 中使用，完整 copy_from_user
+ *     边界检查是后续安全加固项。
  */
 #ifndef FYXOS_PROCESS_H
 #define FYXOS_PROCESS_H
@@ -36,10 +37,19 @@
 #define PROC_MAX_FDS     16
 
 struct fyx_pipe;
+struct fyx_file;
 
-/* 阶段 G 只有管道 fd；文件/descriptor 抽象会在阶段 H 扩展 */
+enum fyx_fd_type {
+    FYX_FD_NONE = 0,
+    FYX_FD_PIPE = 1,
+    FYX_FD_FILE = 2,
+};
+
+/* fd 是进程表项；文件偏移与管道端点生命周期由被引用对象维护。 */
 struct fyx_fd {
     struct fyx_pipe *pipe;
+    struct fyx_file *file;
+    u8               type;        /* enum fyx_fd_type */
     u8               flags;       /* FYX_FD_READ / FYX_FD_WRITE */
 };
 

@@ -57,5 +57,15 @@ typedef int                bool;
 #define FYX_EAGAIN  4
 #define FYX_EFAULT  5
 #define FYX_EPIPE   6       /* 管道读端已全部关闭 */
+#define FYX_EIO     7       /* 设备 I/O 或介质校验错误 */
+#define FYX_ENOENT  8
+#define FYX_EEXIST  9
+#define FYX_ENOTDIR 10
+#define FYX_EISDIR  11
+#define FYX_ENOSPC  12
+#define FYX_EBADF   13
+#define FYX_ENOTEMPTY 14
+#define FYX_ERANGE  15
+#define FYX_EBUSY   16
 
 #endif /* FYXOS_TYPES_H */

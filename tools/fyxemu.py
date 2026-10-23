@@ -202,7 +202,8 @@ class FyxEmu:
     def __init__(self, image=None, kernel=None, ram_mb=64, mode="full-boot",
                  keys=None, show_bios=False, max_seconds=120, quiet=False,
                  tick_every=20000, chunk=20000, trace_syscalls=False,
-                 keys_after=None):
+                 keys_after=None, writeback=False, disk_output=None,
+                 power_fail_after=None, power_fail_write=1):
         self.image_path = image
         self.kernel_path = kernel
         self.ram_bytes = ram_mb * 1024 * 1024
@@ -220,10 +221,23 @@ class FyxEmu:
         self.ram = (ctypes.c_ubyte * self.ram_bytes)()
         self.ram_addr = ctypes.addressof(self.ram)
 
-        self.disk = b""
+        self.writeback = writeback
+        self.disk_output = disk_output
+        self.disk_dirty = False
+        self.disk = bytearray()
         if image:
             with open(image, "rb") as f:
-                self.disk = f.read()
+                self.disk = bytearray(f.read())
+        elif mode == "quick":
+            # quick 模式也提供一块带合法系统分区的 32 MiB ATA RAM 盘，
+            # 因而文件系统与 exec 路径不再依赖 full-boot 的镜像输入。
+            self.disk = bytearray(32 * 1024 * 1024)
+            total = len(self.disk) // 512
+            part = bytearray(16)
+            part[4] = 0x83
+            struct.pack_into("<II", part, 8, 2048, total - 2048)
+            self.disk[0x1BE:0x1BE + 16] = part
+            self.disk[510:512] = b"\x55\xAA"
 
         self.elf = None
         if kernel:
@@ -268,6 +282,21 @@ class FyxEmu:
         self.iret_addr = 0
         self.HAS_ERR = frozenset((8, 10, 11, 12, 13, 14, 17, 21, 29, 30))
         self.tlb = {}
+
+        # ATA PIO 模型（端口 0x1F0..0x1F7 / 0x3F6）。与真机一样，命令先
+        # 设置 LBA/计数寄存器，再通过 DATA 端口逐字传输 256 个 word。
+        self.ata_regs = {0x1F1: 0, 0x1F2: 0, 0x1F3: 0,
+                         0x1F4: 0, 0x1F5: 0, 0x1F6: 0xA0}
+        self.ata_status = 0x50           # DRDY | DSC
+        self.ata_buffer = bytearray()
+        self.ata_pos = 0
+        self.ata_write_lba = None
+        self.ata_writes = 0
+        self.power_fail_after = power_fail_after
+        self.power_fail_write = power_fail_write
+        self.power_fail_armed = False
+        self.power_fail_writes_seen = 0
+        self.power_failed = False
 
         # 阶段 2 的 trampoline（让客户机自己打开分页，见文件头说明第 2 条）
         self.trampoline = bytes([
@@ -637,6 +666,11 @@ class FyxEmu:
             data += self.phys_read(base, start - chunk)
         self.klog_pos = head
         self.console_out += data
+        if (self.power_fail_after and not self.power_fail_armed and
+                self.power_fail_after.encode("utf-8") in self.console_out):
+            self.power_fail_armed = True
+            self.power_fail_writes_seen = 0
+            log(f"[fyxemu] 已看到断电标记，将在第 {self.power_fail_write} 次 ATA 写后断电")
         if (not self.keys_armed and self.keys_after and
                 self.keys_after.encode("utf-8") in self.console_out):
             self.keys_armed = True
@@ -787,8 +821,116 @@ class FyxEmu:
             return
         self._set_carry(uc, True)
 
+    # ------------------------------ ATA PIO --------------------------------
+    def ata_lba(self):
+        return (self.ata_regs[0x1F3] |
+                (self.ata_regs[0x1F4] << 8) |
+                (self.ata_regs[0x1F5] << 16) |
+                ((self.ata_regs[0x1F6] & 0x0F) << 24))
+
+    @staticmethod
+    def ata_identify_sector(sectors):
+        words = [0] * 256
+        words[0] = 0x0040
+        words[49] = 0x0200             # LBA supported
+        words[60] = sectors & 0xFFFF
+        words[61] = (sectors >> 16) & 0xFFFF
+        words[80] = 0x0070
+        words[83] = 0x4000
+
+        def string_field(first, count, text):
+            raw = text.encode("ascii", "replace")[:count * 2].ljust(count * 2)
+            for i in range(count):
+                words[first + i] = (raw[2 * i] << 8) | raw[2 * i + 1]
+
+        string_field(10, 10, "FYXOS-ATA-0001")
+        string_field(27, 20, "FYXOS PERSISTENT ATA DISK")
+        data = bytearray()
+        for word in words:
+            data += struct.pack("<H", word)
+        return data
+
+    def ata_command(self, command):
+        self.ata_pos = 0
+        self.ata_write_lba = None
+        if command == 0xEC:              # IDENTIFY DEVICE
+            self.ata_buffer = self.ata_identify_sector(len(self.disk) // 512)
+            self.ata_status = 0x58       # DRDY | DSC | DRQ
+            return
+        if command == 0x20:              # READ SECTORS (one sector)
+            lba = self.ata_lba()
+            start = lba * 512
+            data = self.disk[start:start + 512]
+            if len(data) != 512:
+                self.ata_buffer = bytearray()
+                self.ata_status = 0x51   # DRDY | ERR
+                self.ata_regs[0x1F1] = 0x04
+                return
+            self.ata_buffer = bytearray(data)
+            self.ata_status = 0x58
+            return
+        if command == 0x30:              # WRITE SECTORS
+            self.ata_buffer = bytearray(512)
+            self.ata_write_lba = self.ata_lba()
+            self.ata_status = 0x58
+            return
+        if command == 0xE7:              # FLUSH CACHE
+            self.ata_buffer = bytearray()
+            self.ata_status = 0x50
+            return
+        self.ata_buffer = bytearray()
+        self.ata_status = 0x51
+        self.ata_regs[0x1F1] = 0x04
+
+    def ata_data_in(self, size):
+        if self.ata_pos + size > len(self.ata_buffer):
+            return 0
+        value = int.from_bytes(self.ata_buffer[self.ata_pos:self.ata_pos + size],
+                               "little")
+        self.ata_pos += size
+        if self.ata_pos >= len(self.ata_buffer):
+            self.ata_status = 0x50
+        return value
+
+    def ata_data_out(self, value, size):
+        if self.ata_write_lba is None or self.ata_pos + size > len(self.ata_buffer):
+            self.ata_status = 0x51
+            return
+        self.ata_buffer[self.ata_pos:self.ata_pos + size] = \
+            int(value & ((1 << (size * 8)) - 1)).to_bytes(size, "little")
+        self.ata_pos += size
+        if self.ata_pos < len(self.ata_buffer):
+            return
+
+        lba = self.ata_write_lba
+        start = lba * 512
+        if start + 512 > len(self.disk):
+            self.ata_status = 0x51
+            self.ata_regs[0x1F1] = 0x04
+            return
+        self.disk[start:start + 512] = self.ata_buffer
+        self.ata_write_lba = None
+        self.ata_status = 0x50
+        self.disk_dirty = True
+        self.ata_writes += 1
+
+        if self.power_fail_armed and not self.power_failed:
+            self.power_fail_writes_seen += 1
+            if self.power_fail_writes_seen >= self.power_fail_write:
+                self.power_failed = True
+                self.stopped = True
+                self.uc.emu_stop()
+                log(f"[fyxemu] 模拟断电：ATA 写点 {self.power_fail_writes_seen}，"
+                    f"LBA={lba}")
+
     # ------------------------------ 端口 I/O -------------------------------
     def port_in(self, uc, port, size):
+        if 0x1F0 <= port <= 0x1F7 or port == 0x3F6:
+            if port == 0x1F0:
+                return self.ata_data_in(size)
+            if port in (0x1F7, 0x3F6):
+                return self.ata_status
+            return self.ata_regs.get(port, 0)
         if port == COM1 + 5:            # 串口线路状态：发送保持寄存器空
             return 0x20
         if port == COM1:
@@ -809,10 +951,19 @@ class FyxEmu:
         return 0x00
 
     def port_out(self, uc, port, size, value):
+        raw = uc.reg_read(UC_X86_REG_RAX if self.phase == 2
+                          else UC_X86_REG_EAX)
+        value = raw & ((1 << (size * 8)) - 1)
+        if 0x1F0 <= port <= 0x1F7 or port == 0x3F6:
+            if port == 0x1F0:
+                self.ata_data_out(value, size)
+            elif port == 0x1F7:
+                self.ata_command(value & 0xFF)
+            elif port in self.ata_regs:
+                self.ata_regs[port] = value & 0xFF
+            return
         if port == COM1:
-            v = uc.reg_read(UC_X86_REG_RAX if self.phase == 2
-                            else UC_X86_REG_EAX) & 0xFF
-            self.serial_out.append(v)
+            self.serial_out.append(value & 0xFF)
             return
         if port == DEBUG_PORT:
             self.shutdown_code = value & 0xFF
@@ -828,7 +979,7 @@ class FyxEmu:
         uc = Uc(UC_ARCH_X86, UC_MODE_16)
         self.uc = uc
         uc.mem_map_ptr(0, self.ram_bytes, UC_PROT_ALL, self.ram_addr)
-        uc.mem_write(MBR_ADDR, self.disk[0:512])
+        uc.mem_write(MBR_ADDR, bytes(self.disk[0:512]))
 
         uc.reg_write(UC_X86_REG_CS, 0)
         uc.reg_write(UC_X86_REG_DS, 0)
@@ -1006,6 +1157,11 @@ class FyxEmu:
                 break
             # sysret 后的第一条用户指令单独执行，详见 emulate_fast_syscall。
             run_count = self.chunk
+            # 断电测试需要先及时读到普通内核日志标记，再开始数 ATA 写；
+            # 只在武装前缩短执行块，不影响正常仿真性能。
+            if (self.power_fail_after and not self.power_fail_armed and
+                    self.keys_armed):
+                run_count = min(run_count, 200)
             if self._user_irq_grace:
                 run_count = 1
                 self._user_irq_grace = False
@@ -1083,6 +1239,19 @@ class FyxEmu:
             # 其余字符（如分号分隔符已被替换）忽略
 
     # --------------------------------- 运行 --------------------------------
+    def save_disk(self):
+        """把 ATA 盘当前介质状态落盘；正常关机与模拟断电都调用。"""
+        target = self.disk_output
+        if target is None and self.writeback:
+            target = self.image_path
+        if target is None or not self.disk_dirty:
+            return
+        directory = os.path.dirname(os.path.abspath(target))
+        os.makedirs(directory, exist_ok=True)
+        with open(target, "wb") as f:
+            f.write(self.disk)
+        log(f"[fyxemu] ATA 介质已保存到 {target}（{self.ata_writes} 次写扇区）")
+
     def run(self):
         if self.mode == "full-boot":
             if not self.image_path:
@@ -1232,7 +1401,10 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("内核启动横幅", "FYXOS"),
         ("自检全部通过", "自检全部通过"),
         ("调度演示完成", "demo-a 计数="),
+        ("ATA 与 FYXFS 挂载", "持久化文件系统就绪"),
+        ("从磁盘加载 init", "从 /bin/init 读取可执行映像"),
         ("用户态启动", "[init] === FYXOS 用户态已启动"),
+        ("用户态文件系统调用", "FYXFS 文件读写与 seek"),
         ("fork 子进程返回 0", "fork 返回 0"),
         ("exec 启动新程序", "[exec] 新程序已启动"),
         ("wait 回收退出码", "wait 回收 pid=2 退出码=7"),
@@ -1267,6 +1439,14 @@ def main() -> int:
     ap.add_argument("--quiet", action="store_true", help="不实时回显内核输出")
     ap.add_argument("--test", action="store_true", help="跑自动化检查")
     ap.add_argument("--max-seconds", type=int, default=120)
+    ap.add_argument("--writeback", action="store_true",
+                    help="把 ATA 写修改保存回 --image")
+    ap.add_argument("--disk-output", default=None,
+                    help="把运行后的 ATA 介质保存到另一镜像")
+    ap.add_argument("--power-fail-after", default=None,
+                    help="看到指定日志后，开始倒数 ATA 写入以模拟断电")
+    ap.add_argument("--power-fail-write", type=int, default=1,
+                    help="标记之后第几次 ATA 扇区写完成时断电（默认 1）")
     ap.add_argument("--tick-every", type=int, default=20000,
                     help="每多少条指令注入一次时钟中断")
     ap.add_argument("--chunk", type=int, default=20000)
@@ -1276,7 +1456,10 @@ def main() -> int:
                  mode=args.mode, keys=args.keys, show_bios=args.show_bios,
                  max_seconds=args.max_seconds, quiet=args.quiet,
                  tick_every=args.tick_every, chunk=args.chunk,
-                 keys_after=args.keys_after)
+                 keys_after=args.keys_after, writeback=args.writeback,
+                 disk_output=args.disk_output,
+                 power_fail_after=args.power_fail_after,
+                 power_fail_write=args.power_fail_write)
     if args.keys:
         script = args.keys.replace(";", "\n").replace("\\n", "\n")
         if not script.endswith("\n"):
@@ -1284,7 +1467,10 @@ def main() -> int:
         emu.build_key_queue(script)
 
     rc = emu.run()
+    emu.save_disk()
 
+    if emu.power_failed:
+        log("[fyxemu] 本次运行按请求在 ATA 写点断电，未执行客户机关机流程")
     if emu.error:
         log(f"[fyxemu] 失败：{emu.error}")
     if emu.shutdown_code is not None:

@@ -222,6 +222,25 @@ long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
     case SYS_CLOSE:
         return sys_close((int)a1);
 
+    case SYS_OPEN:
+        return sys_open((const char *)(uintptr_t)a1, (u32)a2, (u32)a3);
+
+    case SYS_LSEEK:
+        return sys_lseek((int)a1, (i64)a2, (u32)a3);
+
+    case SYS_STAT:
+        return sys_stat((const char *)(uintptr_t)a1,
+                        (void *)(uintptr_t)a2);
+
+    case SYS_MKDIR:
+        return sys_mkdir((const char *)(uintptr_t)a1, (u32)a2);
+
+    case SYS_UNLINK:
+        return sys_unlink((const char *)(uintptr_t)a1);
+
+    case SYS_SYNC:
+        return sys_sync();
+
     default:
         g_syscall_unknown++;
         return -FYX_ENOSYS;

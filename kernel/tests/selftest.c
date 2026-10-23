@@ -12,6 +12,7 @@
 #include <fyxos/mm.h>
 #include <fyxos/syscall.h>
 #include <fyxos/x86_64.h>
+#include <fyxos/fyxfs.h>
 
 #define SELFTEST(name)  static int t_##name(void)
 #define CHECK(cond)                                                           \
@@ -209,6 +210,16 @@ SELFTEST(console)
     return 0;
 }
 
+/* --------------------------------------------------------- 存储校验算法 */
+SELFTEST(crc32)
+{
+    /* CRC-32/ISO-HDLC 标准向量，防止根块/文件校验实现静默漂移。 */
+    CHECK(fyx_crc32("123456789", 9) == 0xCBF43926u);
+    CHECK(fyx_crc32("", 0) == 0);
+    CHECK(fyx_crc32("FYXFS", 5) != fyx_crc32("FYXFT", 5));
+    return 0;
+}
+
 /* ============================== 测试 runner ============================= */
 struct selftest_case {
     const char *name;
@@ -224,6 +235,7 @@ static const struct selftest_case g_cases[] = {
     { "heap",    t_heap    },
     { "syscall", t_syscall },
     { "console", t_console },
+    { "crc32",   t_crc32   },
 };
 
 int kernel_selftest(void)

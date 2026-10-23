@@ -20,6 +20,7 @@
 #include <fyxos/lib.h>
 #include <fyxos/x86_64.h>
 #include <fyxos/syscall.h>
+#include <fyxos/vfs.h>
 
 /* 由 isr.S / usermode.S 提供 */
 extern void arch_return_to_user(const struct user_regs *r) NORETURN;
@@ -229,6 +230,10 @@ long sys_fork(void)
     struct thread *ct = thread_create(child->name, process_thread_entry, child,
                                       parent->thread ? parent->thread->priority : 5);
     if (!ct) {
+        /* 已在上面挂入 children；失败回滚必须同时摘下，否则 wait 会等到
+         * 一个状态为 UNUSED、地址空间也已释放的“子进程”。 */
+        list_remove(&child->child_link);
+        parent->nr_children--;
         process_free(child);
         return -FYX_ENOMEM;
     }
@@ -249,8 +254,27 @@ long sys_fork(void)
 
 #define EXEC_STRING_MAX 64
 
-/* 阶段 G 的调用者传入的是当前用户地址空间里的指针；先复制到内核栈，
- * 再更换地址空间。后续接入文件系统时应统一换成带访问检查的 copy_from_user。 */
+static int load_program_image(const char *name, void **out, size_t *size)
+{
+    char path[VFS_PATH_MAX];
+    if (!name || !*name || strlen(name) >= sizeof(path))
+        return -FYX_EINVAL;
+    if (strchr(name, '/')) {
+        if (snprintf(path, sizeof(path), "%s", name) >= (int)sizeof(path))
+            return -FYX_ERANGE;
+    } else {
+        if (snprintf(path, sizeof(path), "/bin/%s", name) >= (int)sizeof(path))
+            return -FYX_ERANGE;
+    }
+    int rc = vfs_read_file(path, out, size);
+    if (rc == 0)
+        kprintf("[proc] 从 %s 读取可执行映像（%u 字节）\n",
+                path, (unsigned)*size);
+    return rc;
+}
+
+/* 调用者传入的是当前用户地址空间里的指针；先复制到内核栈，再更换地址空间。
+ * 后续安全加固应统一换成带访问检查的 copy_from_user。 */
 static int copy_exec_string(char *dst, size_t cap, const char *src)
 {
     if (!dst || !src || cap == 0)
@@ -275,7 +299,7 @@ long sys_exec(const char *name, const char *const argv[],
         return -FYX_EINVAL;
 
     /* 这些缓冲区在内核栈上，旧用户空间销毁后仍然有效 */
-    char name_copy[PROC_NAME_MAX];
+    char name_copy[VFS_PATH_MAX];
     char arg_store[USER_MAX_ARGS][EXEC_STRING_MAX];
     char env_store[USER_MAX_ARGS][EXEC_STRING_MAX];
     const char *new_argv[USER_MAX_ARGS + 1];
@@ -283,9 +307,8 @@ long sys_exec(const char *name, const char *const argv[],
     int argc = 0, envc = 0;
 
     if (copy_exec_string(name_copy, sizeof(name_copy), name) != 0 ||
-        name_copy[0] == '\0' ||
-        strncmp(name_copy, "init", PROC_NAME_MAX) != 0)
-        return -FYX_EINVAL;         /* TODO: 有文件系统后按路径查找 */
+        name_copy[0] == '\0')
+        return -FYX_EINVAL;
 
     while (argv && argv[argc] && argc < USER_MAX_ARGS) {
         if (copy_exec_string(arg_store[argc], EXEC_STRING_MAX,
@@ -304,22 +327,32 @@ long sys_exec(const char *name, const char *const argv[],
     }
     new_envp[envc] = NULL;
 
+    /* 文件先读入内核缓冲：即使随后切换地址空间，ELF 与参数也都仍有寿命。 */
+    void *program = NULL;
+    size_t program_size = 0;
+    int load_rc = load_program_image(name_copy, &program, &program_size);
+    if (load_rc != 0)
+        return load_rc;
+
     /* 在新地址空间里试装载，失败时原进程仍可继续运行 */
     struct address_space new_as = { 0 };
-    if (vmm_create_address_space(&new_as) != 0)
+    if (vmm_create_address_space(&new_as) != 0) {
+        kfree(program);
         return -FYX_ENOMEM;
+    }
 
     struct process image;
     memset(&image, 0, sizeof(image));
     image.as = new_as;
     strncpy(image.name, p->name, PROC_NAME_MAX - 1);
 
-    size_t size = (size_t)(g_init_image_end - g_init_image_start);
-    if (process_load_elf(&image, g_init_image_start, size,
+    if (process_load_elf(&image, program, program_size,
                          new_argv, new_envp) != 0) {
+        kfree(program);
         vmm_destroy_address_space(&new_as);
         return -FYX_EINVAL;
     }
+    kfree(program);
 
     /* 成功后才替换旧空间；此刻仍在旧空间执行，切换后再回收旧页表 */
     struct address_space old_as = p->as;
@@ -468,11 +501,16 @@ void process_start_init(void)
     g_init_proc = p;
     p->parent = NULL;
 
-    size_t size = (size_t)(g_init_image_end - g_init_image_start);
-    if (size == 0)
-        panic("process: 内嵌的 init 镜像为空");
-    if (process_load_elf(p, g_init_image_start, size, argv, envp) != 0)
-        panic("process: 装载 init 失败");
+    void *program = NULL;
+    size_t size = 0;
+    int rc = load_program_image("/bin/init", &program, &size);
+    if (rc != 0 || size == 0)
+        panic("process: 无法从 FYXFS 读取 /bin/init（%d）", rc);
+    if (process_load_elf(p, program, size, argv, envp) != 0) {
+        kfree(program);
+        panic("process: 装载 /bin/init 失败");
+    }
+    kfree(program);
 
     struct thread *t = thread_create("init", process_thread_entry, p, 5);
     if (!t)

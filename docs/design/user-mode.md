@@ -7,7 +7,8 @@
 
 ```
 内核 kmain
-  → process_start_init()
+  → ATA/FYXFS 挂载，必要时安装初始 /bin/init
+  → process_start_init() → vfs_read_file("/bin/init")
   → process_load_elf()       为 init 建独立 PML4、代码/数据页和用户栈
   → process_thread_entry()   切 CR3、设置 TSS.RSP0
   → arch_return_to_user()    sysret 到 ring 3 的 _start
@@ -27,8 +28,9 @@
   `VMM_USER`、写权限和 NX，遵循 W^X。
 - `process_load_elf()` 按 SysV AMD64 ABI 布置 `argc/argv/envp/auxv`；只有程序
   头表确实被映射时才写 `AT_PHDR`，否则使用精简 auxv。
-- 目前 init 用 `.incbin` 内嵌进内核，尚无文件系统路径查找。FYXFS 落地后，
-  同一个装载器应接到 VFS/read 路径，而不是再写一套 ELF 解析器。
+- init 的安装种子仍用 `.incbin` 随内核携带，但只用于首启写入 `/bin/init`；
+  `process_start_init()` 和 `exec` 已统一通过 VFS 读取文件，不再直接执行内嵌
+  blob，也没有另写一套 ELF 解析器。
 
 ## 3. 系统调用与调度不变式
 
@@ -46,9 +48,10 @@
 ## 4. fork / exec / wait
 
 - fork 当前为全量复制用户页（正确优先，CoW 后续优化），复制父进程用户现场，
-  子进程 RAX 改为 0；fd 表复制并增加管道端点引用。
-- exec 先把名字、argv、envp 复制到内核栈，在新地址空间试装载，成功后才交换
-  地址空间并回收旧页表；失败不会毁掉原程序。fd 表保留。
+  子进程 RAX 改为 0；fd 表复制并增加管道端点或文件对象引用。
+- exec 先把名字、argv、envp 复制到内核栈，再从 `/bin/<name>` 或显式路径读取
+  ELF，在新地址空间试装载，成功后才交换地址空间并回收旧页表；失败不会毁掉
+  原程序。fd 表保留。
 - wait 只等待当前进程的子进程，子进程退出立即关闭 fd；父进程回收时释放
   地址空间。
 
@@ -58,7 +61,8 @@
 
 - `SYS_PIPE` 安装读/写 fd，`SYS_READ`/`SYS_WRITE` 操作当前进程 fd；
 - fork 继承、exec 保留，最后一个写端关闭后读端看到 EOF；
-- 暂时用 1 tick 睡眠重试代替条件变量，后续与 VFS/统一 file 层一起改进。
+- 暂时用 1 tick 睡眠重试代替条件变量；fd 已与 VFS 文件统一分派，后续再
+  引入睡眠队列/条件变量消除轮询。
 
 ## 6. 测试台边界
 

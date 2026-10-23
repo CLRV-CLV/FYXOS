@@ -41,7 +41,34 @@ int main(int argc, char **argv, char **envp)
     sys_puts(envp && envp[0] ? envp[0] : "(null)");
     sys_puts("\n");
 
-    /* 2) 建管道后 fork：验证 fd 继承与进程间通信 */
+    /* 2) 持久化文件 fd：create/write/sync/seek/read/stat 全走 ring 3 ABI。 */
+    static const char file_msg[] = "ring3-storage-ok";
+    int filefd = sys_open("/home/user/ring3.txt",
+                          FYX_O_RDWR | FYX_O_CREAT | FYX_O_TRUNC);
+    if (filefd < 0 ||
+        sys_fd_write(filefd, file_msg, sizeof(file_msg) - 1) !=
+            (long)(sizeof(file_msg) - 1) ||
+        sys_sync() != 0 || sys_lseek(filefd, 0, FYX_SEEK_SET) != 0) {
+        sys_puts("[init] 文件写入或 sync/seek 失败\n");
+        sys_exit(1);
+    }
+    char file_buf[sizeof(file_msg)] = { 0 };
+    long file_n = sys_fd_read(filefd, file_buf, sizeof(file_msg) - 1);
+    int file_ok = file_n == (long)(sizeof(file_msg) - 1);
+    for (unsigned long i = 0; file_ok && i < sizeof(file_msg) - 1; i++)
+        if (file_buf[i] != file_msg[i])
+            file_ok = 0;
+    sys_close(filefd);
+    struct fyx_user_stat init_stat;
+    long stat_rc = sys_stat("/bin/init", &init_stat);
+    sys_puts("[init] FYXFS 文件读写与 seek ");
+    sys_puts(file_ok && stat_rc == 0 && init_stat.size > 0
+             ? "✓ 内容一致，/bin/init stat 正常\n"
+             : "✗ 校验失败\n");
+    if (!file_ok || stat_rc != 0)
+        sys_exit(1);
+
+    /* 3) 建管道后 fork：验证 fd 继承与进程间通信 */
     int pipefds[2];
     if (sys_pipe(pipefds) < 0) {
         sys_puts("[init] pipe 创建失败\n");
@@ -72,7 +99,7 @@ int main(int argc, char **argv, char **envp)
         sys_close(pipefds[1]);
         sys_puts("[child] 执行 exec...\n");
         const char *exec_argv[] = { "init", "--execed", NULL };
-        sys_exec("init", exec_argv, (const char *const *)envp);
+        sys_exec("/bin/init", exec_argv, (const char *const *)envp);
         sys_puts("[child] exec 失败\n");
         sys_exit(1);
     }

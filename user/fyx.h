@@ -33,7 +33,30 @@ typedef long          ssize_t_;
 #define SYS_READ        0x1018
 #define SYS_WRITE       0x1019
 #define SYS_CLOSE       0x101A
+#define SYS_OPEN        0x101B
+#define SYS_LSEEK       0x101C
+#define SYS_STAT        0x101D
+#define SYS_MKDIR       0x101E
+#define SYS_UNLINK      0x101F
+#define SYS_SYNC        0x1020
 
+#define FYX_O_RDONLY    0x00
+#define FYX_O_WRONLY    0x01
+#define FYX_O_RDWR      0x02
+#define FYX_O_CREAT     0x10
+#define FYX_O_TRUNC     0x20
+#define FYX_O_APPEND    0x40
+#define FYX_SEEK_SET    0
+#define FYX_SEEK_CUR    1
+#define FYX_SEEK_END    2
+
+struct fyx_user_stat {
+    unsigned long size;
+    unsigned int node;
+    unsigned int type;
+    unsigned int flags;
+    unsigned int crc32;
+};
 /*
  * SYSCALL 的寄存器约定（与内核 syscall_entry.S 一致）：
  *   号 RAX；参数 RDI, RSI, RDX, R10, R8, R9；
@@ -97,6 +120,24 @@ static inline long sys_fd_write(int fd, const void *buf, unsigned long len)
     return SYS3(SYS_WRITE, fd, buf, len);
 }
 static inline long sys_close(int fd)        { return SYS1(SYS_CLOSE, fd); }
+static inline long sys_open(const char *path, unsigned long flags)
+{
+    return SYS3(SYS_OPEN, path, flags, 0);
+}
+static inline long sys_lseek(int fd, long offset, unsigned long whence)
+{
+    return SYS3(SYS_LSEEK, fd, offset, whence);
+}
+static inline long sys_stat(const char *path, struct fyx_user_stat *st)
+{
+    return SYS2(SYS_STAT, path, st);
+}
+static inline long sys_mkdir(const char *path)
+{
+    return SYS2(SYS_MKDIR, path, 0);
+}
+static inline long sys_unlink(const char *path) { return SYS1(SYS_UNLINK, path); }
+static inline long sys_sync(void)               { return SYS0(SYS_SYNC); }
 static inline long sys_shutdown(long code)  { return SYS1(SYS_SHUTDOWN, code); }
 
 /* --- 几个不依赖内核的小工具，免得引入外部 libc --- */

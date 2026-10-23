@@ -81,7 +81,7 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user image emu emu-quick test clean dump
+.PHONY: all kernel boot user image emu emu-quick test test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
@@ -104,8 +104,8 @@ $(BUILD)/kernel/%.o: kernel/%.S
 	@echo "  AS      $<"
 
 # ------------------------------------------------------------------ 用户态
-# 用户程序先编成静态 ELF64，再由 kernel/sys/init_image.S 用 .incbin 内嵌进
-# 内核 —— 阶段 G 还没有文件系统，这是把用户程序带进系统的最直接办法。
+# 用户程序先编成静态 ELF64，再由 kernel/sys/init_image.S 用 .incbin 作为
+# 首启安装种子带入内核；storage_init 会把它写入 /bin/init，之后均从 VFS 装载。
 user: $(USER_ELF)
 
 $(USER_ELF): $(USER_OBJS) user/user.ld
@@ -177,8 +177,12 @@ emu-quick: $(KERNEL_ELF)
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick $(EMU_ARGS)
 
 test: image
-	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 45
-	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 45
+	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
+	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
+	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-storage: image
+	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
 
 # -------------------------------------------------------------------- 辅助
 dump: $(KERNEL_ELF)

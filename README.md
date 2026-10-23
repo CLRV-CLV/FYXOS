@@ -10,15 +10,17 @@
 
 ---
 
-## 当前进度：阶段 A–G 核心已完成 ✅
+## 当前进度：A–H 与系统还原核心已落地 ✅
 
-从第一条 BIOS 指令到用户态进程，再回到内核 Shell，全链路在 Unicorn 测试台上实跑验证：
+从第一条 BIOS 指令到持久化文件系统、用户态进程和快照回滚，全链路在
+Unicorn 测试台上实跑验证：
 
 ```
 BIOS → MBR(stage1) → stage2(A20/E820/ELF 装载/建页表) → 长模式
-     → 内核 banner → boot_info → PMM/VMM/堆 → 8 项自检
-     → 抢占式调度演示 → 用户 init（ring 3 / fork / exec / 管道）
-     → 内核 Shell → 正常关机
+     → 内核 banner → boot_info → PMM/VMM/堆 → 9 项自检
+     → 抢占式调度 → ATA/FYXFS 挂载 → 从 /bin/init 装载用户 ELF
+     → ring 3 文件 I/O / fork / exec / 管道 → 救援 Shell / 快照回滚
+     → 正常关机；另有跨重启与 ATA 写点断电恢复测试
 ```
 
 ### 快速开始
@@ -58,25 +60,35 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 虚拟内存 | `kernel/mm/vmm.c` | 四级页表，内核高半核 + HHDM |
 | 堆 | `kernel/mm/heap.c` | 首次适应 |
 | 调度 | `kernel/sched/` | 抢占式轮转 + idle 线程 + 上下文切换 |
-| 系统调用 | `kernel/sys/` | SYSCALL/SYSRET，27 个调用，每线程独立系统调用栈 |
-| 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk |
-| 管道 | `kernel/sys/pipe.c` | fd 继承、跨 exec、环形缓冲、EOF |
-| 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与验收 init |
+| 系统调用 | `kernel/sys/` | SYSCALL/SYSRET，33 个调用，每线程独立系统调用栈 |
+| 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF |
+| 管道与 fd | `kernel/sys/pipe.c` | 管道/文件统一 fd，fork 引用、跨 exec、EOF |
+| ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
+| FYXFS | `kernel/fs/fyxfs.c` | 4KiB CoW 块、双超级块、CRC32、目录/extents、快照 |
+| VFS | `kernel/fs/vfs.c` | 路径/目录、文件对象、共享偏移、open/read/write/lseek |
+| 系统还原 | `kernel/fs/fyxfs.c` | O(1) 快照、事务式回滚，默认保留 `/home` |
+| 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与文件/进程验收 init |
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
-| 内核 Shell | `kernel/shell/shell.c` | 16 条命令 |
-| 自检 | `kernel/tests/selftest.c` | 8 项，全部通过 |
-| 测试台 | `tools/fyxemu.py` | 假 BIOS（INT 10h/13h/15h/16h/1Ah）+ 两段式引擎 |
+| 内核 Shell | `kernel/shell/shell.c` | 34 条命令，含文件、挂载、快照与首批跨系统别名 |
+| 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
+| 测试台 | `tools/fyxemu.py` | 假 BIOS + 可写 ATA + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
 
 ### 自动化验收
 
 ```bash
-make test       # full-boot + quick：自检、调度、ring 3、fork/exec/wait、管道、Shell
+make test          # full-boot + quick + 持久化/回滚/4 个断电写点
+make test-storage  # 只重跑存储集成测试
 ```
 
-当前刻意保留的简化：fork 先全量复制（CoW 留到后续）、init 以 `.incbin`
-内嵌（文件系统落地后改按路径加载）、管道等待采用 tick 轮询、libc 仍是最小
-封装；这些不影响上述链路的真实执行验证。
+断电测试在第 1、9、16、17 个 ATA 写扇区处分别停机并保留介质，再用同一镜像
+重新启动，验证旧/新事务内容且 `fsck=0`。状态镜像和日志放在
+`build/storage-test/`。
+
+当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
+携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
+最小封装。FYXFS v1 限 40 节点/16 快照，采用追加分配，尚未实现旧块回收、
+B 树、压缩、去重、GPT、AHCI/NVMe 和权限位；这些边界不会被算作已完成。
 
 ### 目录结构
 
@@ -113,3 +125,4 @@ docs/            规格与远景设计
 - [`docs/design/ide.md`](docs/design/ide.md) — FYX IDE
 - [`docs/design/system-restore.md`](docs/design/system-restore.md) — 系统还原
 - [`docs/design/user-mode.md`](docs/design/user-mode.md) — 阶段 G 用户态实现与验证边界
+- [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现

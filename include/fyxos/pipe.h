@@ -1,9 +1,8 @@
 /*
- * FYXOS — 阶段 G 的最小管道 fd 接口
+ * FYXOS — 管道与统一 fd 接口
  *
- * 这是进程间通信的第一块，不是控制台 write 的替代品：
- *   SYS_LOG_WRITE 仍然负责把字节写到内核控制台；
- *   SYS_READ/SYS_WRITE 则操作当前进程的管道 fd。
+ * SYS_LOG_WRITE 负责内核控制台；SYS_READ/SYS_WRITE 则按当前进程 fd 的
+ * 类型分派到管道或 VFS 文件。此头文件保留 pipe 名称以兼容既有进程代码。
  */
 #ifndef FYXOS_PIPE_H
 #define FYXOS_PIPE_H

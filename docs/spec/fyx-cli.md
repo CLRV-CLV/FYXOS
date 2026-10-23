@@ -178,10 +178,10 @@ fyxsh> iwconfig
 
 ## 5. 与当前内核 Shell 的关系
 
-`kernel/shell/shell.c` 里的 16 条命令（`help uname mem ps uptime echo test
-alloc log yield sleep fault clear reboot shutdown exit`）是**内核态救援 Shell**，
-定位是"内核起来后能查状态、能自检、能关机"，不是最终用户终端。
+`kernel/shell/shell.c` 当前有 34 条命令：最初 16 条内核诊断命令，加上文件、
+挂载、FYXFS 校验、快照/回滚及 `dir/type/md/del` 等首批别名。它仍是
+**内核态救援 Shell**，不是最终用户终端，也不代表下列兼容规范已完整实现。
 
-阶段 G 完成后，用户态 `fyxsh` 接管：
+后续用户态 `fyxsh` 将接管：
 - 内核 Shell 保留，通过 `Alt+F1` 或串口进入（救援用途）
 - `fyxsh` 实现上述全部规范，兼容层以 `.fyx` 包分发，可独立更新
