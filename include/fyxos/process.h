@@ -1,0 +1,109 @@
+/*
+ * FYXOS — 用户进程（阶段 G）
+ * ---------------------------------------------------------------------------
+ * 本阶段的目标是把"用户态"立起来：进程拥有**独立的用户地址空间**，通过
+ * `syscall` 从 ring 3 进入内核，能 fork / exec / wait / exit。
+ *
+ * 刻意简化的地方（后续阶段补齐，都在下面标注了 TODO）：
+ *   - 一进程一线程：进程与线程是 1:1，`struct process` 里直接持有线程指针。
+ *     多线程（pthread 语义）等有了用户态线程库再做。
+ *   - fork 用**全量复制**而不是写时复制：逻辑简单、不会错。等页故障处理
+ *     完善后改成 CoW，届时复制一次只需标记只读 + 共享帧。
+ *   - exec 不读文件系统：程序镜像以内嵌 blob（.incbin）形式随内核提供，
+ *     按名字索引。等 FYXFS 落地后换成真正的路径查找。
+ */
+#ifndef FYXOS_PROCESS_H
+#define FYXOS_PROCESS_H
+
+#include <fyxos/types.h>
+#include <fyxos/mm.h>
+#include <fyxos/sync.h>
+
+/* ---------------------------------------------------------------- 地址布局 */
+/*
+ * 用户空间只占 PML4 的第 0 项（0 ~ 512 GiB），内核占高半核。
+ * 布局刻意留了大片空隙，便于日后加 ASLR 与 mmap 区域。
+ */
+#define USER_CODE_BASE   0x0000000000400000ull   /* 非 PIE 程序默认链接地址 */
+#define USER_HEAP_BASE   0x0000000010000000ull   /* brk 起点 */
+#define USER_STACK_TOP   0x000000007ffff000ull   /* 栈顶（不含） */
+#define USER_STACK_SIZE  (64ull * 1024ull)       /* 用户栈大小 */
+#define USER_AREA_LIMIT  0x0000800000000000ull   /* 用户空间上界（非规范地址起） */
+
+#define MAX_PROCESSES    32
+#define PROC_NAME_MAX    32
+#define USER_MAX_ARGS    16
+#define PROC_MAX_FDS     16
+
+struct fyx_pipe;
+
+/* 阶段 G 只有管道 fd；文件/descriptor 抽象会在阶段 H 扩展 */
+struct fyx_fd {
+    struct fyx_pipe *pipe;
+    u8               flags;       /* FYX_FD_READ / FYX_FD_WRITE */
+};
+
+enum process_state {
+    PROC_UNUSED = 0,
+    PROC_EMBRYO,        /* 刚建好、还没装载镜像 */
+    PROC_RUNNABLE,
+    PROC_RUNNING,
+    PROC_SLEEPING,      /* wait() 中等子进程 */
+    PROC_ZOMBIE,
+};
+
+struct process {
+    u64                pid;
+    struct process    *parent;
+    enum process_state state;
+    int                exit_code;
+
+    struct address_space as;       /* 用户地址空间（PML4 物理地址） */
+    u64                entry;      /* 程序入口（虚拟地址） */
+    u64                brk;        /* 程序断点（堆顶） */
+    u64                ustack_top;
+
+    struct thread     *thread;     /* TODO: 一进程一线程，日后改成线程链表 */
+    char               name[PROC_NAME_MAX];
+
+    struct list_head   child_link; /* 挂在父进程的 children 链表上 */
+    struct list_head   children;
+    u32                nr_children;
+
+    struct fyx_fd      fds[PROC_MAX_FDS];
+};
+
+/* ---------------------------------------------------------------- 接口 */
+void process_init(void);
+
+struct process *process_create(const char *name);
+void            process_free(struct process *p);
+struct process *process_by_pid(u64 pid);
+struct process *current_process(void);
+void            process_switch_to(struct process *p);
+
+/* 把内存中的 ELF64 镜像装进进程地址空间，并布置好 argc/argv/envp 栈 */
+int  process_load_elf(struct process *p, const void *image, size_t size,
+                      const char *const argv[], const char *const envp[]);
+
+/* 让某个线程开始执行用户程序：切到进程页表，iretq 落到 ring 3。
+ * 由 thread 的入口函数调用，永不返回。 */
+void NORETURN process_enter_userspace(struct process *p);
+
+/* ------------------------------------------------------- 系统调用实现 */
+long sys_fork(void);
+long sys_exec(const char *name, const char *const argv[],
+              const char *const envp[]);
+long sys_wait(u64 pid, int *status);
+long sys_exit(int code);
+long sys_getpid(void);
+long sys_getppid(void);
+long sys_brk(u64 new_brk);
+
+/* 内嵌用户程序镜像（tools/mkimage 之外，由 .incbin 随内核提供） */
+extern const u8 g_init_image_start[];
+extern const u8 g_init_image_end[];
+
+void process_start_init(void);   /* 由 kmain 调用：装载并运行第一个用户进程 */
+
+#endif /* FYXOS_PROCESS_H */
