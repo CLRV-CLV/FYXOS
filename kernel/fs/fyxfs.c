@@ -612,6 +612,78 @@ int fyxfs_unlink(const char *path)
     return commit_root(&next);
 }
 
+int fyxfs_rename(const char *old_path, const char *new_path)
+{
+    if (!g_fs.mounted || !old_path || !new_path)
+        return -FYX_EINVAL;
+    u32 node;
+    int rc = lookup_root(&g_fs.root.root, old_path, &node);
+    if (rc != 0)
+        return rc;
+    if (node == 0)
+        return -FYX_EBUSY;
+    size_t len = strlen(new_path);
+    if (len == 0 || len >= FYXFS_PATH_CAP || new_path[len - 1] == '/')
+        return -FYX_EINVAL;
+
+    char parent_path[FYXFS_PATH_CAP];
+    memcpy(parent_path, new_path, len + 1);
+    char *slash = NULL;
+    for (char *p = parent_path; *p; p++)
+        if (*p == '/')
+            slash = p;
+    const char *name;
+    char name_copy[FYXFS_NAME_MAX + 1];
+    if (!slash) {
+        memcpy(parent_path, "/", 2);
+        name = new_path;
+    } else {
+        size_t base_len = strlen(slash + 1);
+        if (base_len > FYXFS_NAME_MAX)
+            return -FYX_ERANGE;
+        memcpy(name_copy, slash + 1, base_len + 1);
+        name = name_copy;
+        if (slash == parent_path)
+            slash[1] = '\0';
+        else
+            *slash = '\0';
+    }
+    size_t name_len = strlen(name);
+    if (name_len == 0 || name_len > FYXFS_NAME_MAX ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+        return -FYX_EINVAL;
+
+    u32 parent;
+    rc = lookup_root(&g_fs.root.root, parent_path, &parent);
+    if (rc != 0)
+        return rc;
+    if (g_fs.root.root.nodes[parent].type != FYXFS_NODE_DIR)
+        return -FYX_ENOTDIR;
+    u32 existing;
+    rc = find_child_root(&g_fs.root.root, parent, name, &existing);
+    if (rc == 0)
+        return existing == node ? FYX_OK : -FYX_EEXIST;
+    if (rc != -FYX_ENOENT)
+        return rc;
+
+    /* 目录不能移动到自己或自己的后代中；损坏的父链也不能造成死循环。 */
+    u32 cursor = parent;
+    for (u32 steps = 0; cursor && steps < FYXFS_MAX_NODES; steps++) {
+        if (cursor == node)
+            return -FYX_EINVAL;
+        if (!node_used(&g_fs.root.root, cursor))
+            return -FYX_EIO;
+        cursor = g_fs.root.root.nodes[cursor].parent;
+    }
+    if (cursor)
+        return -FYX_EIO;
+    struct fyxfs_root_disk next = g_fs.root.root;
+    next.nodes[node].parent = parent;
+    memset(next.nodes[node].name, 0, sizeof(next.nodes[node].name));
+    memcpy(next.nodes[node].name, name, name_len + 1);
+    return commit_root(&next);
+}
+
 int fyxfs_getdents(u32 dir, u32 index, struct fyxfs_node_info *out)
 {
     if (!g_fs.mounted || !out || !node_used(&g_fs.root.root, dir))

@@ -178,10 +178,17 @@ fyxsh> iwconfig
 
 ## 5. 与当前内核 Shell 的关系
 
-`kernel/shell/shell.c` 当前有 37 条命令：最初 16 条内核诊断命令，加上文件、
-挂载、FYXFS 校验、快照/回滚、`dir/type/md/del` 等首批别名、阶段 I 的
-`ifconfig/ping`，以及阶段 J 的 `desktop [run|next|theme|info]`。它仍是
-**内核态救援 Shell**，不是最终用户终端，也不代表下列兼容规范已完整实现。
+`kernel/shell/shell.c` 当前有 62 条命令，仍是**内核态救援 Shell**，不是最终
+用户终端。已实跑的 FYX 原生子集包括 `list files/processes/disks/network`、
+`show file/system/network`、`make file/dir`、`copy/move/rename/edit/build` 和
+`explain`；另有 `touch/mv/ren/cls/ver/tasklist/ipconfig/chkdsk` 以及
+`Get-ChildItem/Get-Content/Get-Process` 等常用子集别名。`mv/ren/move/rename`
+走 FYXFS 单次 CoW 根事务，不是复制后删除。
+
+`tools/test_cli.py` 验证 touch 不清空、目标冲突不覆盖、rename 后旧路径消失、
+内容与新目录项跨重启保持，以及原生 `build → ring3 run`。这些命令不表示完整
+GNU/BSD/CMD/PowerShell 参数兼容；结构化管道、引用/通配/重定向、cd/pwd、作业
+控制和上述完整覆盖矩阵仍未实现。
 
 后续用户态 `fyxsh` 将接管：
 - 内核 Shell 保留，通过 `Alt+F1` 或串口进入（救援用途）

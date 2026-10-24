@@ -57,6 +57,7 @@ int fyxfs_node_info(u32 node, struct fyxfs_node_info *out);
 int fyxfs_find_child(u32 parent, const char *name, u32 *node);
 int fyxfs_create(const char *path, u32 type, u32 *node);
 int fyxfs_unlink(const char *path);
+int fyxfs_rename(const char *old_path, const char *new_path);
 int fyxfs_read_node(u32 node, u64 offset, void *buf, size_t len,
                     size_t *done);
 int fyxfs_write_node(u32 node, u64 offset, const void *buf, size_t len,

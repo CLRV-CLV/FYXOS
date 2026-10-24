@@ -81,6 +81,11 @@ int vfs_unlink(const char *path)
     return fyxfs_unlink(path);
 }
 
+int vfs_rename(const char *old_path, const char *new_path)
+{
+    return fyxfs_rename(old_path, new_path);
+}
+
 int vfs_getdents(const char *path, u32 index, struct fyxfs_node_info *out)
 {
     u32 dir;

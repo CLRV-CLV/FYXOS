@@ -94,6 +94,8 @@ static int cmd_write(int argc, char **argv);
 static int cmd_mkdir(int argc, char **argv);
 static int cmd_rm(int argc, char **argv);
 static int cmd_cp(int argc, char **argv);
+static int cmd_touch(int argc, char **argv);
+static int cmd_rename(int argc, char **argv);
 static int cmd_stat(int argc, char **argv);
 static int cmd_df(int argc, char **argv);
 static int cmd_fsck(int argc, char **argv);
@@ -109,6 +111,7 @@ static int cmd_desktop(int argc, char **argv);
 static int cmd_fyxcc(int argc, char **argv);
 static int cmd_git(int argc, char **argv);
 static int cmd_run(int argc, char **argv);
+static int cmd_native(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
     &(const struct command){ "help",     "help [命令]",       "显示命令列表或某个命令的用法", cmd_help },
@@ -124,6 +127,9 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "sleep",    "sleep <毫秒>",      "睡眠若干毫秒",                  cmd_sleep },
     &(const struct command){ "fault",    "fault",             "故意触发一次异常（测试路径）",  cmd_fault },
     &(const struct command){ "clear",    "clear",             "清屏",                          cmd_clear },
+    &(const struct command){ "cls",      "cls",               "clear 的 CMD 别名",              cmd_clear },
+    &(const struct command){ "ver",      "ver",               "uname 的 CMD 别名",              cmd_uname },
+    &(const struct command){ "tasklist", "tasklist",           "ps 的 CMD 别名",                 cmd_threads },
     &(const struct command){ "reboot",   "reboot",            "重启",                          cmd_reboot },
     &(const struct command){ "shutdown", "shutdown",          "关机",                          cmd_shutdown },
     &(const struct command){ "exit",     "exit",              "退出 Shell 并停机",             cmd_exit },
@@ -137,21 +143,38 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "rm",       "rm <路径>",         "删除空目录或文件（del 为别名）", cmd_rm },
     &(const struct command){ "del",      "del <路径>",        "rm 的跨系统命令别名",            cmd_rm },
     &(const struct command){ "cp",       "cp <源> <目标>",    "复制文件",                       cmd_cp },
+    &(const struct command){ "copy",     "copy <源> <目标>",  "cp 的 CMD/FYX 别名",             cmd_native },
+    &(const struct command){ "touch",    "touch <文件>",      "创建空文件（保留已有内容）",       cmd_touch },
+    &(const struct command){ "mv",       "mv <源> <目标>",    "原子重命名/移动",                 cmd_native },
+    &(const struct command){ "ren",      "ren <源> <目标>",   "mv 的 CMD 别名",                 cmd_native },
     &(const struct command){ "stat",     "stat <路径>",       "显示节点、大小与 CRC32",         cmd_stat },
     &(const struct command){ "df",       "df",                "显示 FYXFS 空间与事务状态",      cmd_df },
     &(const struct command){ "fsck",     "fsck",              "校验根、快照和文件数据",         cmd_fsck },
+    &(const struct command){ "chkdsk",   "chkdsk",            "fsck 的 CMD 别名",               cmd_fsck },
     &(const struct command){ "sync",     "sync",              "把 ATA 写缓存刷入介质",          cmd_sync },
     &(const struct command){ "mount",    "mount",             "重新挂载系统分区",               cmd_mount },
     &(const struct command){ "unmount",  "unmount",           "卸载系统分区",                   cmd_unmount },
     &(const struct command){ "snapshot", "snapshot [create 名]", "列出或创建 CoW 快照",         cmd_snapshot },
     &(const struct command){ "rollback", "rollback <id> [all]", "回滚；默认保留 /home",          cmd_rollback },
     &(const struct command){ "ifconfig", "ifconfig",           "显示 IPv4、MAC 与网络统计",      cmd_ifconfig },
+    &(const struct command){ "ipconfig", "ipconfig",           "ifconfig 的 CMD 别名",          cmd_ifconfig },
     &(const struct command){ "ping",     "ping [IPv4] [毫秒]",  "向网关或指定 IPv4 发送 ICMP echo", cmd_ping },
     &(const struct command){ "desktop",  "desktop [run|next|theme|info]", "启动/控制软件合成图形桌面", cmd_desktop },
     &(const struct command){ "ide",      "ide <source.c>",        "图形编辑器：保存/编译/运行",   cmd_ide },
     &(const struct command){ "fyxcc",    "fyxcc <源文件> <ELF>", "内置 C 子集原生编译器",       cmd_fyxcc },
     &(const struct command){ "cc",       "cc <源文件> <ELF>",   "fyxcc 的跨系统命令别名",       cmd_fyxcc },
     &(const struct command){ "git",      "git <子命令> ...",     "FYXGit v1：暂存/提交/diff/恢复", cmd_git },
+    &(const struct command){ "list",     "list <对象> [路径]",   "FYX：列出 files/processes/disks/network", cmd_native },
+    &(const struct command){ "show",     "show <对象> [路径]",   "FYX：查看 file/system/network",  cmd_native },
+    &(const struct command){ "make",     "make file|dir <路径>", "FYX：创建文件或目录",             cmd_native },
+    &(const struct command){ "move",     "move <源> <目标>",     "FYX：原子移动/重命名",             cmd_native },
+    &(const struct command){ "rename",   "rename <源> <目标>",   "FYX：原子重命名",                 cmd_native },
+    &(const struct command){ "edit",     "edit <source.c>",      "FYX：打开 FYX Studio",           cmd_native },
+    &(const struct command){ "build",    "build <源> <ELF>",     "FYX：调用原生 C 编译器",          cmd_native },
+    &(const struct command){ "explain",  "explain <命令>",       "FYX：解释命令用法",               cmd_native },
+    &(const struct command){ "Get-ChildItem", "Get-ChildItem [路径]", "PowerShell：list files 子集", cmd_ls },
+    &(const struct command){ "Get-Content", "Get-Content <文件>", "PowerShell：show file 子集",    cmd_cat },
+    &(const struct command){ "Get-Process", "Get-Process",       "PowerShell：list processes 子集", cmd_threads },
     &(const struct command){ "run",      "run <ELF>",           "从磁盘装载并等待用户程序",       cmd_run },
 };
 
@@ -576,6 +599,64 @@ static int cmd_run(int argc, char **argv)
     return status;
 }
 
+/* FYX 原生动词：统一“动词 + 对象”，每个分支都落到真实内核服务。 */
+static int cmd_native(int argc, char **argv)
+{
+    const char *verb = argv[0];
+    if (strcmp(verb, "copy") == 0)
+        return cmd_cp(argc, argv);
+    if (strcmp(verb, "move") == 0 || strcmp(verb, "rename") == 0 ||
+        strcmp(verb, "mv") == 0 || strcmp(verb, "ren") == 0)
+        return cmd_rename(argc, argv);
+    if (strcmp(verb, "edit") == 0)
+        return cmd_ide(argc, argv);
+    if (strcmp(verb, "build") == 0)
+        return cmd_fyxcc(argc, argv);
+    if (strcmp(verb, "explain") == 0) {
+        if (argc < 2) {
+            kprintf("用法: explain <命令>；FYX 形式为 动词 [对象] [路径]\n");
+            return 1;
+        }
+        return cmd_help(argc, argv);
+    }
+    if (argc < 2)
+        goto usage;
+    if (strcmp(verb, "list") == 0) {
+        if (strcmp(argv[1], "files") == 0 && argc <= 3) {
+            char *args[2] = { argv[0], argc == 3 ? argv[2] : (char *)"/" };
+            return cmd_ls(2, args);
+        }
+        if (strcmp(argv[1], "processes") == 0 && argc == 2)
+            return cmd_threads(1, argv);
+        if (strcmp(argv[1], "disks") == 0 && argc == 2)
+            return cmd_df(1, argv);
+        if (strcmp(argv[1], "network") == 0 && argc == 2)
+            return cmd_ifconfig(1, argv);
+    } else if (strcmp(verb, "show") == 0 && argc == 3) {
+        if (strcmp(argv[1], "file") == 0) {
+            char *args[2] = { argv[0], argv[2] };
+            return cmd_cat(2, args);
+        }
+    } else if (strcmp(verb, "show") == 0 && argc == 2 &&
+               strcmp(argv[1], "system") == 0) {
+        int rc = cmd_uname(1, argv);
+        return rc != 0 ? rc : cmd_mem(1, argv);
+    } else if (strcmp(verb, "show") == 0 && argc == 2 &&
+               strcmp(argv[1], "network") == 0) {
+        return cmd_ifconfig(1, argv);
+    } else if (strcmp(verb, "make") == 0 && argc == 3) {
+        char *args[2] = { argv[0], argv[2] };
+        if (strcmp(argv[1], "file") == 0)
+            return cmd_touch(2, args);
+        if (strcmp(argv[1], "dir") == 0)
+            return cmd_mkdir(2, args);
+    }
+usage:
+    kprintf("用法: list files|processes|disks|network；show file|system|network；"
+            "make file|dir；copy/move/rename/edit/build ...\n");
+    return 1;
+}
+
 /* ========================== 文件与系统还原 ============================== */
 static int cmd_ls(int argc, char **argv)
 {
@@ -700,6 +781,42 @@ static int cmd_cp(int argc, char **argv)
     if (rc != 0)
         kprintf("cp: 错误 %d\n", rc);
     return rc != 0;
+}
+
+static int cmd_touch(int argc, char **argv)
+{
+    if (argc != 2)
+        return 1;
+    struct fyx_file *file = NULL;
+    int rc = vfs_open(argv[1], VFS_O_WRONLY | VFS_O_CREAT, &file);
+    if (rc == 0 && file->type != FYXFS_NODE_FILE) {
+        vfs_file_close(file);
+        kprintf("touch: %s 不是普通文件\n", argv[1]);
+        return 1;
+    }
+    if (rc == 0)
+        rc = vfs_file_close(file);
+    if (rc != 0) {
+        kprintf("touch: 错误 %d\n", rc);
+        return 1;
+    }
+    kprintf("[fs] touched %s\n", argv[1]);
+    return 0;
+}
+
+static int cmd_rename(int argc, char **argv)
+{
+    if (argc != 3) {
+        kprintf("用法: mv <源> <目标>\n");
+        return 1;
+    }
+    int rc = vfs_rename(argv[1], argv[2]);
+    if (rc != 0) {
+        kprintf("mv: 错误 %d\n", rc);
+        return 1;
+    }
+    kprintf("[fs] renamed %s -> %s\n", argv[1], argv[2]);
+    return 0;
 }
 
 static int cmd_stat(int argc, char **argv)
