@@ -19,6 +19,7 @@
 #include <fyxos/net.h>
 #include <fyxos/desktop.h>
 #include <fyxos/fyxcc.h>
+#include <fyxos/fyxgit.h>
 #include <fyxos/ide.h>
 #include <fyxos/process.h>
 
@@ -106,6 +107,7 @@ static int cmd_ping(int argc, char **argv);
 static int cmd_ide(int argc, char **argv);
 static int cmd_desktop(int argc, char **argv);
 static int cmd_fyxcc(int argc, char **argv);
+static int cmd_git(int argc, char **argv);
 static int cmd_run(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
@@ -149,6 +151,7 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "ide",      "ide <source.c>",        "图形编辑器：保存/编译/运行",   cmd_ide },
     &(const struct command){ "fyxcc",    "fyxcc <源文件> <ELF>", "内置 C 子集原生编译器",       cmd_fyxcc },
     &(const struct command){ "cc",       "cc <源文件> <ELF>",   "fyxcc 的跨系统命令别名",       cmd_fyxcc },
+    &(const struct command){ "git",      "git <子命令> ...",     "FYXGit v1：暂存/提交/diff/恢复", cmd_git },
     &(const struct command){ "run",      "run <ELF>",           "从磁盘装载并等待用户程序",       cmd_run },
 };
 
@@ -550,6 +553,11 @@ static int cmd_fyxcc(int argc, char **argv)
     kprintf("[cc] %s -> %s（%llu 字节，x86_64 ET_EXEC）\n",
             argv[1], argv[2], (unsigned long long)st.size);
     return 0;
+}
+
+static int cmd_git(int argc, char **argv)
+{
+    return fyxgit_command(argc, argv);
 }
 
 static int cmd_run(int argc, char **argv)

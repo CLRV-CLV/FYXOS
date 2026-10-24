@@ -243,7 +243,8 @@ void vga_get_cursor(u16 *row, u16 *col);
 void vga_set_cursor(u16 row, u16 col);
 
 /* ============================== PS/2 键盘 =============================== */
-#define KEYBUF_SIZE 256
+/* 允许命令/源码整段粘贴；中断期间仍有 dropped 计数防止静默覆盖。 */
+#define KEYBUF_SIZE 4096
 
 void keyboard_init(void);
 int  keyboard_has_char(void);

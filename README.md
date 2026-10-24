@@ -72,12 +72,13 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 无宿主依赖的常量表达式/字符串编译，生成静态 x86_64 ET_EXEC，诊断偏移可报告 |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
+| FYXGit v1 | `kernel/git/fyxgit.c` | 原子仓库数据库、暂存/提交父链、状态、文本 diff、restore；不是 Git SHA-1/pack 兼容实现 |
 | FYXFS | `kernel/fs/fyxfs.c` | 4KiB CoW 块、双超级块、CRC32、目录/extents、快照 |
 | VFS | `kernel/fs/vfs.c` | 路径/目录、文件对象、共享偏移、open/read/write/lseek |
 | 系统还原 | `kernel/fs/fyxfs.c` | O(1) 快照、事务式回滚，默认保留 `/home` |
 | 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与文件/进程验收 init |
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
-| 内核 Shell | `kernel/shell/shell.c` | 41 条命令，含 desktop、ide、fyxcc/cc/run、ifconfig/ping、文件、挂载、快照与首批跨系统别名 |
+| 内核 Shell | `kernel/shell/shell.c` | 42 条命令，含 desktop、ide、fyxcc/cc/run、git、ifconfig/ping、文件、挂载、快照与首批跨系统别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
 | 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
@@ -85,8 +86,9 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 24 + 工具链/IDE 2 + 图形 3 + 存储 5
+make test           # full/quick 各 24 + 工具链/IDE 2 + FYXGit 2 + 图形 3 + 存储 5
 make test-toolchain  # 重复编译/运行、诊断、Studio 编辑闭环与 PNG 校验
+make test-git        # 提交、diff、restore 与跨重启仓库持久化
 make test-graphics  # 交互、PNG 像素、帧校验和、无 BGA 救援路径
 make test-storage   # 只重跑存储集成测试
 ```
@@ -99,8 +101,8 @@ make test-storage   # 只重跑存储集成测试
 用户态窗口协议、完整字体/输入法和真实 RTC。桌面是内核态首版合成器，不能据此
 宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前只接受 `int main` 中的
 `puts/print("...")` 与整数常量表达式 `return`，不是完整 C/GCC/Clang；Studio
-也是单文件、末尾插入式首版，不是 VS Code 级 IDE。多语言编译器、git、TCP/IPv6、
-A/B 槽与独立救援环境仍未完成。
+也是单文件、末尾插入式首版，不是 VS Code 级 IDE。FYXGit 仅是上述受限 v1，
+不是完整 Git 兼容；多语言编译器、TCP/IPv6、A/B 槽与独立救援环境仍未完成。
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
@@ -147,3 +149,4 @@ docs/            规格与远景设计
 - [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现
 - [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP socket 与实跑验收边界
 - [`docs/design/graphics.md`](docs/design/graphics.md) — BGA、软件光栅、桌面交互与帧校验边界
+- [`docs/design/fyxgit.md`](docs/design/fyxgit.md) — FYXGit v1 仓库格式、diff/restore 与跨重启边界
