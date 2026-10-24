@@ -75,14 +75,18 @@ def main():
             "write /home/user/control.c int main(){int x=0\\;while(x<6){x=x+1\\;}if(x==6){x=x*7\\;}else{x=1\\;}if(x<42){x=0\\;}else{x=x+0\\;}puts(\"CONTROL_OK\")\\;return x\\;};"
             "fyxcc /home/user/control.c /home/user/control.elf;"
             "run /home/user/control.elf;"
+            "write /home/user/app.js function main(){let x=0\\;while(x<6){x=x+1\\;}if(x===6){x=x*7\\;}else{x=1\\;}console.log(\"JS_OK\")\\;process.exit(x)\\;};"
+            "fyxjs /home/user/app.js /home/user/app.elf;run /home/user/app.elf;"
             "write /home/user/bad.c int main(){return(};"
             "fyxcc /home/user/bad.c /home/user/bad.elf;"
+            "write /home/user/bad.js function main(){console.log('bad')\\;};"
+            "fyxjs /home/user/bad.js /home/user/bad.elf;"
             "run /home/user/repeat.elf;shutdown"
         )
         out, _ = run_case("repeat-and-diagnostic", args.kernel, output_dir,
                           keys, args.max_seconds)
         exits = re.findall(r"\[proc\] exit: pid=\d+ code=42", out)
-        if len(exits) != 6 or out.count("REPEAT_OK") < 5:
+        if len(exits) != 7 or out.count("REPEAT_OK") < 5:
             raise RuntimeError(f"重复运行次数错误：exit42={len(exits)} output={out.count('REPEAT_OK')}")
         if out.count("[cc] /home/user/repeat.c") != 2:
             raise RuntimeError("重复编译次数错误")
@@ -91,7 +95,11 @@ def main():
         expect(out, "[run] /home/user/repeat.elf 退出码=42", "退出码")
         expect(out, "CONTROL_OK", "变量/分支/循环程序输出")
         expect(out, "[run] /home/user/control.elf 退出码=42", "控制流退出码")
-        print("  [PASS] 重复编译/运行、变量/if/while、真实退出码 42、非法源码诊断")
+        expect(out, "[js] /home/user/app.js", "FyxJS 原生编译")
+        expect(out, "JS_OK", "FyxJS 程序输出")
+        expect(out, "[run] /home/user/app.elf 退出码=42", "FyxJS 退出码")
+        expect(out, "only double-quoted strings", "FyxJS 负向诊断")
+        print("  [PASS] C/FyxJS 重复编译、控制流、ring3 退出码 42、正/负向诊断")
     except Exception as error:
         failures += 1
         print(f"  [FAIL] Shell 工具链：{error}")

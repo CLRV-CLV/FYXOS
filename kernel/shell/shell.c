@@ -19,6 +19,7 @@
 #include <fyxos/net.h>
 #include <fyxos/desktop.h>
 #include <fyxos/fyxcc.h>
+#include <fyxos/fyxjs.h>
 #include <fyxos/fyxgit.h>
 #include <fyxos/ide.h>
 #include <fyxos/process.h>
@@ -109,6 +110,7 @@ static int cmd_ping(int argc, char **argv);
 static int cmd_ide(int argc, char **argv);
 static int cmd_desktop(int argc, char **argv);
 static int cmd_fyxcc(int argc, char **argv);
+static int cmd_fyxjs(int argc, char **argv);
 static int cmd_git(int argc, char **argv);
 static int cmd_run(int argc, char **argv);
 static int cmd_native(int argc, char **argv);
@@ -163,6 +165,8 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "ide",      "ide <source.c>",        "图形编辑器：保存/编译/运行",   cmd_ide },
     &(const struct command){ "fyxcc",    "fyxcc <源文件> <ELF>", "内置 C 子集原生编译器",       cmd_fyxcc },
     &(const struct command){ "cc",       "cc <源文件> <ELF>",   "fyxcc 的跨系统命令别名",       cmd_fyxcc },
+    &(const struct command){ "fyxjs",    "fyxjs <源文件> <ELF>", "FyxJS 子集原生编译器",         cmd_fyxjs },
+    &(const struct command){ "jsc",      "jsc <源文件> <ELF>",   "fyxjs 的命令别名",             cmd_fyxjs },
     &(const struct command){ "git",      "git <子命令> ...",     "FYXGit v1：暂存/提交/diff/恢复", cmd_git },
     &(const struct command){ "list",     "list <对象> [路径]",   "FYX：列出 files/processes/disks/network", cmd_native },
     &(const struct command){ "show",     "show <对象> [路径]",   "FYX：查看 file/system/network",  cmd_native },
@@ -574,6 +578,31 @@ static int cmd_fyxcc(int argc, char **argv)
     if (vfs_stat(argv[2], &st) != 0)
         return 1;
     kprintf("[cc] %s -> %s（%llu 字节，x86_64 ET_EXEC）\n",
+            argv[1], argv[2], (unsigned long long)st.size);
+    return 0;
+}
+
+static int cmd_fyxjs(int argc, char **argv)
+{
+    if (argc != 3) {
+        kprintf("用法: %s <source.js> <输出ELF>\n", argv[0]);
+        return 1;
+    }
+    struct fyxcc_diagnostic diagnostic;
+    int rc = fyxjs_compile_file(argv[1], argv[2], &diagnostic);
+    if (rc != 0) {
+        kprintf("%s: 编译失败（错误 %d）", argv[0], rc);
+        if (diagnostic.message[0])
+            kprintf("：%s（偏移 %u）", diagnostic.message,
+                    (unsigned)diagnostic.offset);
+        kprintf("\n");
+        return 1;
+    }
+    struct vfs_stat st;
+    int stat_rc = vfs_stat(argv[2], &st);
+    if (stat_rc != 0)
+        return 1;
+    kprintf("[js] %s -> %s（%llu 字节，x86_64 ET_EXEC）\n",
             argv[1], argv[2], (unsigned long long)st.size);
     return 0;
 }

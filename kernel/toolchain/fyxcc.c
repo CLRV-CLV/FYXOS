@@ -796,6 +796,8 @@ int fyxcc_compile(const char *source, size_t source_len,
 int fyxcc_compile_file(const char *source_path, const char *output_path,
                        struct fyxcc_diagnostic *diagnostic)
 {
+    if (diagnostic)
+        memset(diagnostic, 0, sizeof(*diagnostic));
     if (!source_path || !output_path)
         return -FYX_EINVAL;
     void *source = NULL, *image = NULL;

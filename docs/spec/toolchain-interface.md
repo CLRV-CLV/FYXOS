@@ -3,10 +3,12 @@
 > 目标：FYXOS **自带全部语言的编译器**。不重新发明 LLVM/GCC，而是定义一套
 > 稳定的接口，把各语言工具链以**统一、可管理、可复现**的方式接进系统。
 >
-> 当前可运行实现是 `kernel/toolchain/fyxcc.c` 的小型 C 子集前端，直接生成静态
-> x86_64 ELF；已有栈上局部变量、四则/比较、if/else、while 和字符串输出。
-> 它验证原生编译/装载主链，但不代表下述 GCC/LLVM、多语言、自举或完整运行库
-> 已经交付。
+> 当前可运行实现包括 `kernel/toolchain/fyxcc.c` 的小型 C 子集前端，以及
+> `kernel/toolchain/fyxjs.c` 的 FyxJS 静态整数子集前端；两者直接生成静态
+> x86_64 ELF，共用控制流、表达式和代码生成后端。FyxJS 已支持 function main、
+> let、严格比较、console.log/process.exit。它们验证两种源语言的原生编译/装载
+> 主链，但不代表完整 C/JavaScript、GCC/LLVM、多语言、自举或完整运行库已经交付。
+> FyxJS 边界详见 [`../design/fyxjs.md`](../design/fyxjs.md)。
 
 ---
 
