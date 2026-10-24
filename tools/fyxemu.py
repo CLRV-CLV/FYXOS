@@ -50,6 +50,7 @@ FYXOS 仿真台架 (fyxemu)
 import argparse
 import ctypes
 import os
+import re
 import struct
 import sys
 import time
@@ -76,6 +77,7 @@ except ImportError:
     sys.exit(2)
 
 from rtl8139 import RTL8139Device
+from bga import BGADevice
 
 # --------------------------------------------------------------------------
 # 常量
@@ -205,7 +207,8 @@ class FyxEmu:
                  keys=None, show_bios=False, max_seconds=120, quiet=False,
                  tick_every=20000, chunk=20000, trace_syscalls=False,
                  keys_after=None, writeback=False, disk_output=None,
-                 power_fail_after=None, power_fail_write=1, no_net=False):
+                 power_fail_after=None, power_fail_write=1, no_net=False,
+                 no_gfx=False, fb_output=None):
         self.image_path = image
         self.kernel_path = kernel
         self.ram_bytes = ram_mb * 1024 * 1024
@@ -286,6 +289,8 @@ class FyxEmu:
         self.tlb = {}
         self.trace_io = False
         self.net = None if no_net else RTL8139Device(self, quiet)
+        self.bga = None if no_gfx else BGADevice(self, quiet)
+        self.fb_output = fb_output
 
         # ATA PIO 模型（端口 0x1F0..0x1F7 / 0x3F6）。与真机一样，命令先
         # 设置 LBA/计数寄存器，再通过 DATA 端口逐字传输 256 个 word。
@@ -929,6 +934,9 @@ class FyxEmu:
 
     # ------------------------------ 端口 I/O -------------------------------
     def port_in(self, uc, port, size):
+        if self.bga and self.bga.handles(port):
+            self.bga._io_in(uc, port, size)
+            return uc.reg_read(UC_X86_REG_RAX) & ((1 << (size * 8)) - 1)
         if self.net and self.net.handles(port):
             self.net._io_in(uc, port, size)
             return uc.reg_read(UC_X86_REG_RAX) & ((1 << (size * 8)) - 1)
@@ -961,6 +969,9 @@ class FyxEmu:
         raw = uc.reg_read(UC_X86_REG_RAX if self.phase == 2
                           else UC_X86_REG_EAX)
         value = raw & ((1 << (size * 8)) - 1)
+        if self.bga and self.bga.handles(port):
+            self.bga._io_out(uc, port, size, value)
+            return
         if self.net and self.net.handles(port):
             self.net._io_out(uc, port, size, value)
             return
@@ -1069,6 +1080,8 @@ class FyxEmu:
         self.uc = uc
         # 关键：映射同一块宿主内存，阶段 1 的成果直接继承
         uc.mem_map_ptr(0, self.ram_bytes, UC_PROT_ALL, self.ram_addr)
+        if self.bga:
+            self.bga.map(uc)
 
         # 注入 trampoline 与参数（让客户机自己打开分页）
         self.phys_write(TRAMPOLINE_ADDR, self.trampoline)
@@ -1261,6 +1274,10 @@ class FyxEmu:
             f.write(self.disk)
         log(f"[fyxemu] ATA 介质已保存到 {target}（{self.ata_writes} 次写扇区）")
 
+    def save_framebuffer(self):
+        if self.bga and self.fb_output:
+            self.bga.save_png(self.fb_output)
+
     def run(self):
         if self.mode == "full-boot":
             if not self.image_path:
@@ -1364,6 +1381,8 @@ class FyxEmu:
         uc = Uc(UC_ARCH_X86, UC_MODE_64)
         self.uc = uc
         uc.mem_map_ptr(0, self.ram_bytes, UC_PROT_ALL, self.ram_addr)
+        if self.bga:
+            self.bga.map(uc)
         self.phys_write(TRAMPOLINE_ADDR, self.trampoline)
         self.phys_write(PARAMS_ADDR, struct.pack(
             "<QQQQ", PML4, 0x20, 0x500, 0x80000011))
@@ -1427,6 +1446,20 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("用户态时钟与堆", "堆已增长"),
         ("未发生 panic", not emu.panic_happened()),
     ]
+    if "desktop" in emu.key_script or "[desktop] frame=" in out:
+        frames = re.findall(
+            r"\[desktop\] frame=(\d+) focus=([A-Z]+) theme=(dark|light) "
+            r"checksum=0x([0-9a-fA-F]{8})", out)
+        checks.extend([
+            ("BGA 800x600 LFB", "[gfx] BGA LFB 800x600x32 phys=0xe0000000" in out),
+            ("软件背 buffer", "软件背 buffer phys=" in out),
+            ("桌面首帧", len(frames) >= 1 and frames[0][0] == "1" and
+             frames[0][1] == "WELCOME" and frames[0][2] == "dark"),
+            ("桌面焦点与主题重绘", len(frames) >= 3 and
+             frames[1][1] == "NETWORK" and frames[2][2] == "light"),
+            ("guest/host framebuffer 校验一致", bool(frames) and emu.bga is not None and
+             int(frames[-1][3], 16) == emu.bga.checksum()),
+        ])
     failures = 0
     log("")
     log("================ 自动化检查 ================")
@@ -1469,6 +1502,10 @@ def main() -> int:
                     help="跟踪 RTL8139 等端口 I/O")
     ap.add_argument("--no-net", action="store_true",
                     help="不安装 RTL8139，用于离线诊断")
+    ap.add_argument("--no-gfx", action="store_true",
+                    help="不安装 BGA，用于纯文本诊断")
+    ap.add_argument("--fb-output", default=None,
+                    help="把 BGA 物理帧缓冲导出为 PNG")
     args = ap.parse_args()
 
     emu = FyxEmu(image=args.image, kernel=args.kernel, ram_mb=args.ram_mb,
@@ -1478,7 +1515,8 @@ def main() -> int:
                  keys_after=args.keys_after, writeback=args.writeback,
                  disk_output=args.disk_output,
                  power_fail_after=args.power_fail_after,
-                 power_fail_write=args.power_fail_write, no_net=args.no_net)
+                 power_fail_write=args.power_fail_write, no_net=args.no_net,
+                 no_gfx=args.no_gfx, fb_output=args.fb_output)
     emu.trace_io = args.trace_io
     if args.keys:
         script = args.keys.replace(";", "\n").replace("\\n", "\n")
@@ -1488,6 +1526,7 @@ def main() -> int:
 
     rc = emu.run()
     emu.save_disk()
+    emu.save_framebuffer()
 
     if emu.power_failed:
         log("[fyxemu] 本次运行按请求在 ATA 写点断电，未执行客户机关机流程")

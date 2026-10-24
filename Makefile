@@ -81,7 +81,7 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user image emu emu-quick test test-storage clean dump
+.PHONY: all kernel boot user image emu emu-quick test test-graphics test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
@@ -177,9 +177,13 @@ emu-quick: $(KERNEL_ELF)
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick $(EMU_ARGS)
 
 test: image
-	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
-	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
+	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/full-desktop.png --test --max-seconds 90
+	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/quick-desktop.png --test --max-seconds 90
+	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-graphics: image
+	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
 
 test-storage: image
 	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)

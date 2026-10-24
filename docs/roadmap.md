@@ -17,13 +17,13 @@
 | A | 自研引导：MBR(stage1) → stage2 → 长模式 → 解析内核 ELF64 → 跳转 | ✅ 完成 |
 | B | 内核核心：GDT/IDT/中断 → PMM → VMM(四级页表) → 堆 → 抢占式调度 → 系统调用 | ✅ 完成 |
 | C | 驱动：串口 / 键盘 / PIT 时钟 / VGA 文本 | ✅ 完成 |
-| D | 内核 Shell（初版 16 条，现 36 条） | ✅ 完成 |
+| D | 内核 Shell（初版 16 条，现 37 条） | ✅ 完成 |
 | E | Unicorn 测试台：假 BIOS + 全链路实跑验证 | ✅ 完成 |
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
 | H | 存储与文件系统 | ✅ 核心完成（ATA/FYXFS/VFS/断电测试） |
 | I | 网络栈 | 🟡 IPv4/UDP 核心完成；TCP/IPv6/DNS/TLS 待办 |
-| J | 图形栈与桌面环境（"比 Win10 好看"） | ⬜ 待办 |
+| J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 BGA 软件桌面核心完成；完整 FyxWay/FyxUI 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | ⬜ 待办 |
 | L | FYX IDE | ⬜ 待办 |
 | M | 系统还原 | ✅ 核心完成（CoW 快照/回滚/保留 `/home`） |
@@ -95,16 +95,27 @@ ring 3 启动；独立 PML4、用户栈/argv/envp/auxv、每线程系统调用�
 DHCP、ICMP echo、UDP、socket fd，以及 `ifconfig`/`ping` 已接入 full-boot 与
 quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回应。新增
 `socket/bind/connect/sendto/recvfrom` 五个系统调用后，当前共 38 个 syscall、
-36 条 Shell 命令。TCP、IPv6、DNS、TLS、E1000/VirtIO-net 仍未实现，详见
+37 条 Shell 命令。TCP、IPv6、DNS、TLS、E1000/VirtIO-net 仍未实现，详见
 [`docs/design/network.md`](design/network.md)。
 
 ### 阶段 J — 图形栈与桌面
 
-- 显示：线性帧缓冲（启动期从 GOP/BIOS 取得）、多显示器
-- 合成器：**FyxWay**（自研合成协议，借鉴 Wayland 的分层思路但更精简）
-- 渲染：自研 `fyx-gfx`（GPU 无关的光栅化 + Vulkan 后端）
-- 界面语言：**FyxUI** —— 声明式、GPU 合成、120Hz、全局暗色/亮色、亚像素抗锯齿
-- 桌面环境 **FyxShell**：全局搜索、虚拟桌面、贴靠布局、窗口规则
+**当前实现（已实跑通过）**：`kernel/drivers/bga.c` 在运行时探测 BGA，设置
+800×600×32 并通过 VMM 映射 `0xE0000000` LFB；`kernel/gfx/gfx.c` 提供连续物理
+背 buffer、裁剪光栅基元、内置 5×7 字体和 present/FNV-1a；`desktop.c` 实现三
+个重叠窗口、焦点 z-order、明暗主题、dock 与 N/T/R/Q 键盘交互。full-boot、
+quick、PNG 像素和 guest/host 帧校验均已接入验收，详见
+[`docs/design/graphics.md`](design/graphics.md)。
+
+**仍未完成**：
+
+- 显示：GOP/VBE 启动期 framebuffer、多显示器、模式枚举与热插拔
+- 合成器：**FyxWay** 用户态协议、窗口管理和真正的客户端生态
+- 渲染：GPU/Vulkan 后端、DMA-buf、垂直同步和 120Hz 验证
+- 界面语言：**FyxUI** 声明式组件、亚像素抗锯齿、完整 Unicode/输入法
+- 桌面环境 **FyxShell**：鼠标、全局搜索、虚拟桌面、贴靠布局、窗口规则
+
+首版是内核态软件桌面，不把上述目标或“比 Win10 完整桌面”算作已交付。
 
 ### 阶段 K — 工具链与 git
 

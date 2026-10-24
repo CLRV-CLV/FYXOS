@@ -85,7 +85,7 @@ v1 固定上限为 40 个节点、16 个快照、23 字节单路径分量；目�
 现在按 fd 类型分派到管道或 VFS 文件。fork 增加文件对象引用，exec 保留 fd，
 exit 关闭文件与管道端点。
 
-救援 Shell 现有 36 条命令（其中 2 条为阶段 I 的 ifconfig/ping），包括：
+救援 Shell 现有 37 条命令（其中 2 条为阶段 I 的 ifconfig/ping，1 条为阶段 J 的 desktop），包括：
 
 ```text
 ls / dir                 cat / type              write / cp

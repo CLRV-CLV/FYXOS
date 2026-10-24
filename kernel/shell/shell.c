@@ -17,6 +17,7 @@
 #include <fyxos/storage.h>
 #include <fyxos/block.h>
 #include <fyxos/net.h>
+#include <fyxos/desktop.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -99,6 +100,7 @@ static int cmd_snapshot(int argc, char **argv);
 static int cmd_rollback(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
+static int cmd_desktop(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
     &(const struct command){ "help",     "help [命令]",       "显示命令列表或某个命令的用法", cmd_help },
@@ -137,6 +139,7 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "rollback", "rollback <id> [all]", "回滚；默认保留 /home",          cmd_rollback },
     &(const struct command){ "ifconfig", "ifconfig",           "显示 IPv4、MAC 与网络统计",      cmd_ifconfig },
     &(const struct command){ "ping",     "ping [IPv4] [毫秒]",  "向网关或指定 IPv4 发送 ICMP echo", cmd_ping },
+    &(const struct command){ "desktop",  "desktop [run|next|theme|info]", "启动/控制软件合成图形桌面", cmd_desktop },
 };
 
 static const struct command *find_command(const char *name)
@@ -468,6 +471,31 @@ static int cmd_ping(int argc, char **argv)
     kprintf("ping ");
     shell_print_ip(destination);
     kprintf(": ICMP echo 回复，time=%u ms\n", rtt);
+    return 0;
+}
+
+static int cmd_desktop(int argc, char **argv)
+{
+    int rc;
+    if (argc == 1)
+        rc = desktop_start();
+    else if (strcmp(argv[1], "run") == 0)
+        rc = desktop_run();
+    else if (strcmp(argv[1], "next") == 0)
+        rc = desktop_next_window();
+    else if (strcmp(argv[1], "theme") == 0)
+        rc = desktop_toggle_theme();
+    else if (strcmp(argv[1], "info") == 0) {
+        desktop_print_info();
+        return 0;
+    } else {
+        kprintf("用法: desktop [run|next|theme|info]\n");
+        return 1;
+    }
+    if (rc != 0) {
+        kprintf("desktop: graphics unavailable/init failed (error %d)\n", rc);
+        return 1;
+    }
     return 0;
 }
 
