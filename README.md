@@ -67,7 +67,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF |
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
 | ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
-| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | PCI/Bus Master DMA、Ethernet/ARP/IPv4、DHCP/ICMP/UDP、socket fd |
+| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | PCI/Bus Master DMA、ARP/IPv4、DHCP/ICMP/UDP、DNS A 查询、共用 socket 队列 |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、四则/比较、if/else/while、字符串输出；直接生成静态 x86_64 ET_EXEC |
@@ -79,7 +79,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 系统还原 | `kernel/fs/fyxfs.c` | O(1) 快照、事务式回滚，默认保留 `/home` |
 | 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与文件/进程验收 init |
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
-| 内核 Shell | `kernel/shell/shell.c` | 64 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、git、ifconfig/ping 与 Unix/CMD/PowerShell 子集别名 |
+| 内核 Shell | `kernel/shell/shell.c` | 65 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、git、resolve/ifconfig/ping 与跨系统子集别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
 | 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
@@ -87,7 +87,8 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 24 + 工具链/IDE 2 + FYXGit 2 + CLI 2 + 图形 3 + 存储 5
+make test           # full/quick 各 24 + DNS 3 + 工具链/IDE 2 + Git/CLI 4 + 图形 3 + 存储 5
+make test-network   # DNS 正/负向报文、错误 ID 过滤、ping 主机名与 ICMP
 make test-toolchain  # C/FyxJS 编译运行、诊断、Studio 编辑闭环与 PNG 校验
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
 make test-cli        # 原生动词、跨系统别名、rename 与跨重启检查
@@ -111,8 +112,9 @@ FYXGit 仅是上述受限 v1，不是完整 Git 兼容；TCP/IPv6、A/B 槽与�
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
-最小封装。网络 v1 仅 RTL8139 轮询、IPv4、DHCP、ICMP、UDP，尚无 DNS、TCP、
-IPv6、TLS、IP 分片重组和 UDP checksum 生成/校验。FYXFS v1 限 40 节点/16 快照，
+最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP 和单次 DNS A 查询，
+尚无 TCP、IPv6、TLS、DNS 缓存/重传/TCP 回退、IP 分片重组和 UDP checksum
+生成/校验。FYXFS v1 限 40 节点/16 快照，
 采用追加分配，尚未实现旧块回收、B 树、压缩、去重、GPT、AHCI/NVMe 和权限位；
 这些边界不会被算作已完成。
 
@@ -152,7 +154,7 @@ docs/            规格与远景设计
 - [`docs/design/system-restore.md`](docs/design/system-restore.md) — 系统还原
 - [`docs/design/user-mode.md`](docs/design/user-mode.md) — 阶段 G 用户态实现与验证边界
 - [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现
-- [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP socket 与实跑验收边界
+- [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP/DNS、异常报文与实跑验收边界
 - [`docs/design/graphics.md`](docs/design/graphics.md) — BGA、软件光栅、桌面交互与帧校验边界
 - [`docs/design/fyxgit.md`](docs/design/fyxgit.md) — FYXGit v1 仓库格式、diff/restore 与跨重启边界
 - [`docs/design/fyxjs.md`](docs/design/fyxjs.md) — FyxJS 原生 JavaScript 子集前端与边界

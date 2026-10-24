@@ -178,7 +178,7 @@ fyxsh> iwconfig
 
 ## 5. 与当前内核 Shell 的关系
 
-`kernel/shell/shell.c` 当前有 64 条命令，仍是**内核态救援 Shell**，不是最终
+`kernel/shell/shell.c` 当前有 65 条命令，仍是**内核态救援 Shell**，不是最终
 用户终端。已实跑的 FYX 原生子集包括 `list files/processes/disks/network`、
 `show file/system/network`、`make file/dir`、`copy/move/rename/edit/build` 和
 `explain`；另有 `touch/mv/ren/cls/ver/tasklist/ipconfig/chkdsk` 以及

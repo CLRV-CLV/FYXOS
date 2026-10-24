@@ -71,5 +71,6 @@ typedef int                bool;
 #define FYX_ETIMEDOUT 18    /* 协议回应超时 */
 #define FYX_EADDRINUSE 19   /* 本地 UDP 端口已绑定 */
 #define FYX_ENOTCONN 20     /* 未 connect 且未提供目的地址 */
+#define FYX_EPROTO  21      /* 协议报文格式、边界或状态无效 */
 
 #endif /* FYXOS_TYPES_H */

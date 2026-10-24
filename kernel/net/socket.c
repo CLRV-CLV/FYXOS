@@ -92,6 +92,32 @@ static int install_socket(struct fyx_socket *socket)
     return -FYX_ENOSPC;
 }
 
+int socket_udp_open(struct fyx_socket **out)
+{
+    if (!out)
+        return -FYX_EINVAL;
+    *out = NULL;
+    if (!net_ready())
+        return -FYX_ENETUNREACH;
+    struct fyx_socket *socket = kzalloc(sizeof(*socket));
+    if (!socket)
+        return -FYX_ENOMEM;
+    spinlock_init(&socket->lock, "udp-socket");
+    socket->refs = 1;
+
+    u64 irq = irq_save_disable();
+    spin_lock(&g_socket_lock);
+    int rc = install_socket(socket);
+    spin_unlock(&g_socket_lock);
+    irq_restore(irq);
+    if (rc != 0) {
+        kfree(socket);
+        return rc;
+    }
+    *out = socket;
+    return FYX_OK;
+}
+
 long sys_socket(u32 domain, u32 type, u32 protocol)
 {
     if (!net_ready())
@@ -109,21 +135,10 @@ long sys_socket(u32 domain, u32 type, u32 protocol)
     if (fd == PROC_MAX_FDS)
         return -FYX_ENOSPC;
 
-    struct fyx_socket *socket = kzalloc(sizeof(*socket));
-    if (!socket)
-        return -FYX_ENOMEM;
-    spinlock_init(&socket->lock, "udp-socket");
-    socket->refs = 1;
-
-    u64 irq = irq_save_disable();
-    spin_lock(&g_socket_lock);
-    int rc = install_socket(socket);
-    spin_unlock(&g_socket_lock);
-    irq_restore(irq);
-    if (rc != 0) {
-        kfree(socket);
+    struct fyx_socket *socket;
+    int rc = socket_udp_open(&socket);
+    if (rc != 0)
         return rc;
-    }
     p->fds[fd].socket = socket;
     p->fds[fd].type = FYX_FD_SOCKET;
     p->fds[fd].flags = FYX_FD_READ | FYX_FD_WRITE;
@@ -167,6 +182,18 @@ static int bind_locked(struct fyx_socket *socket, u16 port)
     return FYX_OK;
 }
 
+int socket_udp_bind(struct fyx_socket *socket, u16 port)
+{
+    if (!socket)
+        return -FYX_EINVAL;
+    u64 irq = irq_save_disable();
+    spin_lock(&g_socket_lock);
+    int rc = bind_locked(socket, port);
+    spin_unlock(&g_socket_lock);
+    irq_restore(irq);
+    return rc;
+}
+
 long sys_bind(int fd, const struct fyx_sockaddr_in *address, size_t address_len)
 {
     struct fyx_socket *socket = fd_socket(fd);
@@ -175,13 +202,24 @@ long sys_bind(int fd, const struct fyx_sockaddr_in *address, size_t address_len)
     if (!address || address_len < sizeof(*address) ||
         address->family != NET_AF_INET)
         return -FYX_EINVAL;
-    u16 port = read_be16((const u8 *)&address->port);
+    return socket_udp_bind(socket, read_be16((const u8 *)&address->port));
+}
+
+int socket_udp_connect(struct fyx_socket *socket, u32 ip, u16 port)
+{
+    if (!socket || !ip || !port)
+        return -FYX_EINVAL;
     u64 irq = irq_save_disable();
     spin_lock(&g_socket_lock);
-    int rc = bind_locked(socket, port);
+    int rc = bind_locked(socket, 0);
     spin_unlock(&g_socket_lock);
     irq_restore(irq);
-    return rc;
+    if (rc != 0)
+        return rc;
+    socket->peer_ip = ip;
+    socket->peer_port = port;
+    socket->connected = true;
+    return FYX_OK;
 }
 
 long sys_connect(int fd, const struct fyx_sockaddr_in *address, size_t address_len)
@@ -192,17 +230,37 @@ long sys_connect(int fd, const struct fyx_sockaddr_in *address, size_t address_l
     if (!address || address_len < sizeof(*address) ||
         address->family != NET_AF_INET || !address->port)
         return -FYX_EINVAL;
+    return socket_udp_connect(socket, address->addr,
+                              read_be16((const u8 *)&address->port));
+}
+
+static long socket_send_to(struct fyx_socket *socket, const void *buffer,
+                           size_t len, u32 ip, u16 port)
+{
+    if ((!buffer && len) || len > NET_MAX_UDP_PAYLOAD)
+        return -FYX_ERANGE;
+    if (!ip || !port)
+        return -FYX_EINVAL;
     u64 irq = irq_save_disable();
     spin_lock(&g_socket_lock);
     int rc = bind_locked(socket, 0);
+    u16 local_port = socket->local_port;
     spin_unlock(&g_socket_lock);
     irq_restore(irq);
     if (rc != 0)
         return rc;
-    socket->peer_ip = address->addr;
-    socket->peer_port = read_be16((const u8 *)&address->port);
-    socket->connected = true;
-    return FYX_OK;
+    rc = net_udp_send(local_port, ip, port, buffer, len);
+    return rc == 0 ? (long)len : rc;
+}
+
+long socket_udp_send(struct fyx_socket *socket, const void *buffer, size_t len)
+{
+    if (!socket)
+        return -FYX_EBADF;
+    if (!socket->connected)
+        return -FYX_ENOTCONN;
+    return socket_send_to(socket, buffer, len, socket->peer_ip,
+                          socket->peer_port);
 }
 
 long sys_sendto(int fd, const void *buffer, size_t len, u32 flags,
@@ -212,8 +270,6 @@ long sys_sendto(int fd, const void *buffer, size_t len, u32 flags,
     struct fyx_socket *socket = fd_socket(fd);
     if (!socket)
         return -FYX_EBADF;
-    if ((!buffer && len) || len > NET_MAX_UDP_PAYLOAD)
-        return -FYX_ERANGE;
 
     u32 ip;
     u16 port;
@@ -229,19 +285,7 @@ long sys_sendto(int fd, const void *buffer, size_t len, u32 flags,
         ip = socket->peer_ip;
         port = socket->peer_port;
     }
-    if (!port)
-        return -FYX_EINVAL;
-
-    u64 irq = irq_save_disable();
-    spin_lock(&g_socket_lock);
-    int rc = bind_locked(socket, 0);
-    u16 local_port = socket->local_port;
-    spin_unlock(&g_socket_lock);
-    irq_restore(irq);
-    if (rc != 0)
-        return rc;
-    rc = net_udp_send(local_port, ip, port, buffer, len);
-    return rc == 0 ? (long)len : rc;
+    return socket_send_to(socket, buffer, len, ip, port);
 }
 
 void net_socket_udp_deliver(u16 destination_port, u32 source_ip,
@@ -286,10 +330,9 @@ void net_socket_udp_deliver(u16 destination_port, u32 source_ip,
     socket_release(socket);
 }
 
-long sys_recvfrom(int fd, void *buffer, size_t len, u32 flags,
-                  struct fyx_sockaddr_in *source, size_t *address_len)
+long socket_udp_recv(struct fyx_socket *socket, void *buffer, size_t len,
+                     u32 flags, u32 *source_ip, u16 *source_port)
 {
-    struct fyx_socket *socket = fd_socket(fd);
     if (!socket)
         return -FYX_EBADF;
     if (!buffer && len)
@@ -302,20 +345,14 @@ long sys_recvfrom(int fd, void *buffer, size_t len, u32 flags,
             struct socket_packet *packet = &socket->queue[socket->read_pos];
             size_t copied = MIN(len, (size_t)packet->length);
             memcpy(buffer, packet->data, copied);
-            u32 source_ip = packet->source_ip;
-            u16 source_port = packet->source_port;
+            if (source_ip)
+                *source_ip = packet->source_ip;
+            if (source_port)
+                *source_port = packet->source_port;
             socket->read_pos = (socket->read_pos + 1) % SOCKET_QUEUE_DEPTH;
             socket->count--;
             spin_unlock(&socket->lock);
             irq_restore(irq);
-            if (source) {
-                memset(source, 0, sizeof(*source));
-                source->family = NET_AF_INET;
-                write_be16((u8 *)&source->port, source_port);
-                source->addr = source_ip;
-            }
-            if (address_len)
-                *address_len = sizeof(*source);
             return (long)copied;
         }
         spin_unlock(&socket->lock);
@@ -325,4 +362,27 @@ long sys_recvfrom(int fd, void *buffer, size_t len, u32 flags,
         net_poll();
         thread_sleep_ms(1);
     }
+}
+
+long sys_recvfrom(int fd, void *buffer, size_t len, u32 flags,
+                  struct fyx_sockaddr_in *source, size_t *address_len)
+{
+    struct fyx_socket *socket = fd_socket(fd);
+    if (!socket)
+        return -FYX_EBADF;
+    u32 source_ip = 0;
+    u16 source_port = 0;
+    long rc = socket_udp_recv(socket, buffer, len, flags,
+                              &source_ip, &source_port);
+    if (rc < 0)
+        return rc;
+    if (source) {
+        memset(source, 0, sizeof(*source));
+        source->family = NET_AF_INET;
+        write_be16((u8 *)&source->port, source_port);
+        source->addr = source_ip;
+    }
+    if (address_len)
+        *address_len = sizeof(*source);
+    return rc;
 }

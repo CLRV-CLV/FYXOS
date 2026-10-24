@@ -40,7 +40,7 @@ def ethernet(destination: bytes, source: bytes, ethertype: int,
 
 
 class IPv4Peer:
-    """10.0.2.0/24 上的 DHCP、网关 ARP、ICMP echo 与 UDP/9 echo。"""
+    """10.0.2.0/24 上的 DHCP、DNS、ARP、ICMP echo 与 UDP/9 echo。"""
 
     def __init__(self, guest_mac: bytes):
         self.guest_mac = guest_mac
@@ -54,6 +54,8 @@ class IPv4Peer:
         self.arp_replies = 0
         self.icmp_replies = 0
         self.udp_echoes = 0
+        self.dns_queries = 0
+        self.dns_wrong_id_replies = 0
 
     def _ip(self, source: bytes, destination: bytes, protocol: int,
             payload: bytes) -> bytes:
@@ -80,11 +82,80 @@ class IPv4Peer:
         options = bytearray((53, 1, message_type, 54, 4)) + self.server_ip
         options += bytes((1, 4)) + self.netmask
         options += bytes((3, 4)) + self.server_ip
+        options += bytes((6, 4)) + self.server_ip
         options += bytes((51, 4)) + struct.pack("!I", 86400)
         options += b"\xff"
         bootp[240:240 + len(options)] = options
         return self._udp(self.server_ip, b"\xff\xff\xff\xff", 67, 68,
                          bytes(bootp))
+
+    @staticmethod
+    def _dns_query_name(query: bytes) -> str | None:
+        if len(query) < 17 or struct.unpack("!H", query[4:6])[0] != 1:
+            return None
+        labels = []
+        pos = 12
+        while True:
+            if pos >= len(query):
+                return None
+            size = query[pos]
+            pos += 1
+            if size == 0:
+                break
+            if size > 63 or pos + size > len(query):
+                return None
+            try:
+                labels.append(query[pos:pos + size].decode("ascii", "strict"))
+            except UnicodeDecodeError:
+                return None
+            pos += size
+        if pos + 4 != len(query):
+            return None
+        if query[pos:pos + 4] != b"\x00\x01\x00\x01":
+            return None
+        return ".".join(labels).lower()
+
+    @staticmethod
+    def _dns_response(query: bytes, addresses: list[bytes], *, rcode: int = 0,
+                      ident: int | None = None, broken: bool = False) -> bytes:
+        question = query[12:]
+        answer_count = 0 if rcode else (1 if broken else len(addresses))
+        if ident is None:
+            ident = struct.unpack("!H", query[:2])[0]
+        header = struct.pack("!HHHHHH", ident, 0x8180 | rcode, 1,
+                             answer_count, 0, 0)
+        answers = bytearray()
+        if broken:
+            # 答案名字的 pointer 指向自己，客户机必须有界地拒绝环路。
+            answer_offset = 12 + len(question)
+            answers += struct.pack("!H", 0xC000 | answer_offset)
+            answers += struct.pack("!HHIH", 1, 1, 60, 4) + bytes((192, 0, 2, 1))
+        else:
+            for address in addresses:
+                answers += b"\xc0\x0c"          # 指向原始问题名字
+                answers += struct.pack("!HHIH", 1, 1, 60, 4) + address
+        return header + question + bytes(answers)
+
+    def _dns(self, query: bytes) -> list[bytes]:
+        name = self._dns_query_name(query)
+        if name is None:
+            return []
+        self.dns_queries += 1
+        if name == "example.test":
+            wrong_id = (struct.unpack("!H", query[:2])[0] + 1) & 0xFFFF
+            self.dns_wrong_id_replies += 1
+            return [self._dns_response(query, [bytes((203, 0, 113, 99))],
+                                       ident=wrong_id),
+                    self._dns_response(query, [bytes((93, 184, 216, 34))])]
+        if name == "gateway.test":
+            return [self._dns_response(query, [self.server_ip])]
+        if name == "missing.test":
+            return [self._dns_response(query, [], rcode=3)]
+        if name == "empty.test":
+            return [self._dns_response(query, [])]
+        if name == "broken.test":
+            return [self._dns_response(query, [], broken=True)]
+        return []                           # unknown.test：用于真实超时
 
     def handle(self, frame: bytes) -> list[bytes]:
         if len(frame) < 14:
@@ -173,6 +244,13 @@ class IPv4Peer:
                 return [ethernet(b"\xff" * 6, self.peer_mac, 0x0800,
                                  self._dhcp(udp_payload, 5))]
             return []
+
+        if destination_port == 53 and destination_ip == self.server_ip:
+            responses = self._dns(udp_payload)
+            return [ethernet(source_mac, self.peer_mac, 0x0800,
+                             self._udp(self.server_ip, source_ip, 53,
+                                       source_port, response))
+                    for response in responses]
 
         if destination_port == 9 and destination_ip == self.server_ip:
             self.udp_echoes += 1

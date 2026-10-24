@@ -29,6 +29,7 @@ struct net_info {
     u8  gateway_mac[6];
     u32 ip;
     u32 gateway;
+    u32 dns_server;
     u32 netmask;
     bool ready;
     bool gateway_mac_valid;
@@ -53,6 +54,7 @@ bool net_ready(void);
 void net_get_info(struct net_info *out);
 void net_get_stats(struct net_stats *out);
 int  net_ping(u32 ip, u32 timeout_ms, u32 *rtt_ms);
+int  net_dns_resolve(const char *name, u32 *address, u32 timeout_ms);
 int  net_udp_send(u16 local_port, u32 remote_ip, u16 remote_port,
                   const void *data, size_t len);
 

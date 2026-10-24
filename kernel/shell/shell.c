@@ -107,6 +107,7 @@ static int cmd_snapshot(int argc, char **argv);
 static int cmd_rollback(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
+static int cmd_resolve(int argc, char **argv);
 static int cmd_ide(int argc, char **argv);
 static int cmd_desktop(int argc, char **argv);
 static int cmd_fyxcc(int argc, char **argv);
@@ -160,7 +161,8 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "rollback", "rollback <id> [all]", "回滚；默认保留 /home",          cmd_rollback },
     &(const struct command){ "ifconfig", "ifconfig",           "显示 IPv4、MAC 与网络统计",      cmd_ifconfig },
     &(const struct command){ "ipconfig", "ipconfig",           "ifconfig 的 CMD 别名",          cmd_ifconfig },
-    &(const struct command){ "ping",     "ping [IPv4] [毫秒]",  "向网关或指定 IPv4 发送 ICMP echo", cmd_ping },
+    &(const struct command){ "ping",     "ping [主机/IP] [毫秒]", "DNS 解析并向目标发送 ICMP echo", cmd_ping },
+    &(const struct command){ "resolve",  "resolve <主机名> [毫秒]", "通过 DHCP DNS 服务器查询 IPv4 A 记录", cmd_resolve },
     &(const struct command){ "desktop",  "desktop [run|next|theme|info]", "启动/控制软件合成图形桌面", cmd_desktop },
     &(const struct command){ "ide",      "ide <source.c>",        "图形编辑器：保存/编译/运行",   cmd_ide },
     &(const struct command){ "fyxcc",    "fyxcc <源文件> <ELF>", "内置 C 子集原生编译器",       cmd_fyxcc },
@@ -467,6 +469,7 @@ static int cmd_ifconfig(int argc, char **argv)
     kprintf("  IPv4 "); shell_print_ip(info.ip);
     kprintf("  掩码 "); shell_print_ip(info.netmask);
     kprintf("  网关 "); shell_print_ip(info.gateway); kprintf("\n");
+    kprintf("  DNS  "); shell_print_ip(info.dns_server); kprintf("\n");
     kprintf("  网关 MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n",
             info.gateway_mac[0], info.gateway_mac[1], info.gateway_mac[2],
             info.gateway_mac[3], info.gateway_mac[4], info.gateway_mac[5],
@@ -484,6 +487,25 @@ static int cmd_ifconfig(int argc, char **argv)
     return 0;
 }
 
+static int cmd_resolve(int argc, char **argv)
+{
+    if (argc < 2 || argc > 3) {
+        kprintf("用法: resolve <主机名> [超时毫秒]\n");
+        return 1;
+    }
+    u32 timeout = argc > 2 ? (u32)strtoul(argv[2], NULL, 0) : 100;
+    u32 address = 0;
+    int rc = net_dns_resolve(argv[1], &address, timeout);
+    if (rc != 0) {
+        kprintf("resolve: %s 失败（错误 %d）\n", argv[1], rc);
+        return 1;
+    }
+    kprintf("[dns] %s -> ", argv[1]);
+    shell_print_ip(address);
+    kprintf("\n");
+    return 0;
+}
+
 static int cmd_ping(int argc, char **argv)
 {
     if (!net_ready()) {
@@ -494,8 +516,14 @@ static int cmd_ping(int argc, char **argv)
     net_get_info(&info);
     u32 destination = info.gateway;
     if (argc > 1 && !shell_parse_ip(argv[1], &destination)) {
-        kprintf("ping: 需要点分十进制 IPv4 地址\n");
-        return 1;
+        int rc = net_dns_resolve(argv[1], &destination, 100);
+        if (rc != 0) {
+            kprintf("ping: 无法解析 %s（错误 %d）\n", argv[1], rc);
+            return 1;
+        }
+        kprintf("ping: %s -> ", argv[1]);
+        shell_print_ip(destination);
+        kprintf("\n");
     }
     u32 timeout = argc > 2 ? (u32)strtoul(argv[2], NULL, 0) : 100;
     if (!timeout)

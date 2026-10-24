@@ -58,6 +58,7 @@ static struct {
     u8 mac[6];
     u32 ip;
     u32 gateway;
+    u32 dns_server;
     u32 netmask;
     u32 arp_ip;
     u8 arp_mac[6];
@@ -104,6 +105,7 @@ void net_get_info(struct net_info *out)
     memcpy(out->gateway_mac, g_net.arp_mac, 6);
     out->ip = g_net.ip;
     out->gateway = g_net.gateway;
+    out->dns_server = g_net.dns_server;
     out->netmask = g_net.netmask;
     out->ready = g_net.ready;
     out->gateway_mac_valid = g_net.arp_valid;
@@ -296,10 +298,13 @@ static void handle_dhcp(const u8 *bootp, size_t len)
         g_net.ip = read_be32(bootp + 16);
         g_net.netmask = dhcp_option(bootp + 240, len - 240, 1);
         g_net.gateway = dhcp_option(bootp + 240, len - 240, 3);
+        g_net.dns_server = dhcp_option(bootp + 240, len - 240, 6);
         if (!g_net.netmask)
             g_net.netmask = NET_IP(255,255,255,0);
         if (!g_net.gateway)
             g_net.gateway = g_net.dhcp_server;
+        if (!g_net.dns_server)
+            g_net.dns_server = g_net.gateway;
         g_net.ready = true;
     }
 }
@@ -468,6 +473,8 @@ int net_init(void)
     ip_print(g_net.gateway);
     kprintf(" 掩码=");
     ip_print(g_net.netmask);
+    kprintf(" DNS=");
+    ip_print(g_net.dns_server);
     kprintf("\n");
 
     int rc = arp_resolve(g_net.gateway, 100);

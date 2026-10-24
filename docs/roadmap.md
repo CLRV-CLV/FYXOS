@@ -17,12 +17,12 @@
 | A | 自研引导：MBR(stage1) → stage2 → 长模式 → 解析内核 ELF64 → 跳转 | ✅ 完成 |
 | B | 内核核心：GDT/IDT/中断 → PMM → VMM(四级页表) → 堆 → 抢占式调度 → 系统调用 | ✅ 完成 |
 | C | 驱动：串口 / 键盘 / PIT 时钟 / VGA 文本 | ✅ 完成 |
-| D | 内核 Shell（初版 16 条，现 64 条） | ✅ 完成 |
+| D | 内核 Shell（初版 16 条，现 65 条） | ✅ 完成 |
 | E | Unicorn 测试台：假 BIOS + 全链路实跑验证 | ✅ 完成 |
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
 | H | 存储与文件系统 | ✅ 核心完成（ATA/FYXFS/VFS/断电测试） |
-| I | 网络栈 | 🟡 IPv4/UDP 核心完成；TCP/IPv6/DNS/TLS 待办 |
+| I | 网络栈 | 🟡 IPv4/UDP 与 DNS A v1 完成；TCP/IPv6/TLS 等待办 |
 | J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 BGA 软件桌面核心完成；完整 FyxWay/FyxUI 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
 | L | FYX IDE | 🟡 单文件 Studio 编辑/构建/运行完成；完整 IDE 待办 |
@@ -93,9 +93,11 @@ ring 3 启动；独立 PML4、用户栈/argv/envp/auxv、每线程系统调用�
 
 **当前实现（已实跑通过）**：RTL8139 PCI/Bus Master DMA、Ethernet/ARP/IPv4、
 DHCP、ICMP echo、UDP、socket fd，以及 `ifconfig`/`ping` 已接入 full-boot 与
-quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回应。新增
-`socket/bind/connect/sendto/recvfrom` 五个系统调用后，当前共 38 个 syscall、
-64 条 Shell 命令。TCP、IPv6、DNS、TLS、E1000/VirtIO-net 仍未实现，详见
+quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回应。DNS v1
+复用同一套内核 UDP socket/队列，从 DHCP option 6 取得服务器，`resolve` 与
+`ping <hostname>` 已验证 A 记录、错误事务 ID、压缩名、NXDOMAIN、畸形报文和
+超时。当前共 38 个 syscall、65 条 Shell 命令。TCP、IPv6、TLS、DNS 缓存/重传/
+TCP 回退与 E1000/VirtIO-net 仍未实现，详见
 [`docs/design/network.md`](design/network.md)。
 
 ### 阶段 J — 图形栈与桌面
