@@ -148,7 +148,9 @@ static inline long sys_unlink(const char *path) { return SYS1(SYS_UNLINK, path);
 static inline long sys_sync(void)               { return SYS0(SYS_SYNC); }
 
 #define FYX_AF_INET       2
+#define FYX_SOCK_STREAM   1
 #define FYX_SOCK_DGRAM    2
+#define FYX_IPPROTO_TCP   6
 #define FYX_IPPROTO_UDP   17
 #define FYX_MSG_DONTWAIT  1
 

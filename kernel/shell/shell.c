@@ -484,6 +484,10 @@ static int cmd_ifconfig(int argc, char **argv)
             (unsigned long long)stats.icmp_echo_replies,
             (unsigned long long)stats.udp_received,
             (unsigned long long)stats.udp_sent);
+    kprintf("  TCP收/发/丢=%llu/%llu/%llu\n",
+            (unsigned long long)stats.tcp_received,
+            (unsigned long long)stats.tcp_sent,
+            (unsigned long long)stats.tcp_dropped);
     return 0;
 }
 

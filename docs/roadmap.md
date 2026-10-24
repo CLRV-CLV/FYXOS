@@ -22,7 +22,7 @@
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
 | H | 存储与文件系统 | ✅ 核心完成（ATA/FYXFS/VFS/断电测试） |
-| I | 网络栈 | 🟡 IPv4/UDP 与 DNS A v1 完成；TCP/IPv6/TLS 等待办 |
+| I | 网络栈 | 🟡 IPv4/UDP、DNS A 与 TCP 主动客户端 v1；IPv6/TLS/完整 TCP 待办 |
 | J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 BGA 软件桌面核心完成；完整 FyxWay/FyxUI 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
 | L | FYX IDE | 🟡 单文件 Studio 编辑/构建/运行完成；完整 IDE 待办 |
@@ -96,8 +96,10 @@ DHCP、ICMP echo、UDP、socket fd，以及 `ifconfig`/`ping` 已接入 full-boo
 quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回应。DNS v1
 复用同一套内核 UDP socket/队列，从 DHCP option 6 取得服务器，`resolve` 与
 `ping <hostname>` 已验证 A 记录、错误事务 ID、压缩名、NXDOMAIN、畸形报文和
-超时。当前共 38 个 syscall、65 条 Shell 命令。TCP、IPv6、TLS、DNS 缓存/重传/
-TCP 回退与 E1000/VirtIO-net 仍未实现，详见
+超时。TCP 主动客户端复用原有 5 个 socket syscall，ring3 已实测 SYN/SYN-ACK/
+ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 EOF。
+当前共 38 个 syscall、65 条 Shell 命令。listen/server、重传、拥塞控制、乱序
+重组、IPv6、TLS、DNS 缓存/重传/TCP 回退与 E1000/VirtIO-net 仍未实现，详见
 [`docs/design/network.md`](design/network.md)。
 
 ### 阶段 J — 图形栈与桌面

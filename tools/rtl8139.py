@@ -34,6 +34,11 @@ def ipv4_packet(source: bytes, destination: bytes, protocol: int,
     return bytes(header) + payload
 
 
+def tcp_checksum(source: bytes, destination: bytes, segment: bytes) -> int:
+    pseudo = source + destination + bytes((0, 6)) + struct.pack("!H", len(segment))
+    return checksum(pseudo + segment)
+
+
 def ethernet(destination: bytes, source: bytes, ethertype: int,
              payload: bytes) -> bytes:
     return destination + source + struct.pack("!H", ethertype) + payload
@@ -56,6 +61,11 @@ class IPv4Peer:
         self.udp_echoes = 0
         self.dns_queries = 0
         self.dns_wrong_id_replies = 0
+        self.tcp_synacks = 0
+        self.tcp_echoes = 0
+        self.tcp_fins = 0
+        self.tcp_dropped = 0
+        self.tcp_connections = {}
 
     def _ip(self, source: bytes, destination: bytes, protocol: int,
             payload: bytes) -> bytes:
@@ -157,6 +167,91 @@ class IPv4Peer:
             return [self._dns_response(query, [], broken=True)]
         return []                           # unknown.test：用于真实超时
 
+    def _tcp_segment(self, source_ip: bytes, destination_ip: bytes,
+                     source_port: int, destination_port: int, sequence: int,
+                     acknowledgment: int, flags: int, payload: bytes = b"",
+                     corrupt_checksum: bool = False) -> bytes:
+        segment = bytearray(20)
+        struct.pack_into("!HHII", segment, 0, source_port, destination_port,
+                         sequence & 0xFFFFFFFF, acknowledgment & 0xFFFFFFFF)
+        segment[12] = 5 << 4
+        segment[13] = flags
+        struct.pack_into("!H", segment, 14, 0xFFFF)
+        segment += payload
+        struct.pack_into("!H", segment, 16,
+                         tcp_checksum(source_ip, destination_ip, bytes(segment)))
+        if corrupt_checksum:
+            segment[16] ^= 0x01
+        return self._ip(source_ip, destination_ip, 6, bytes(segment))
+
+    def _tcp(self, source_ip: bytes, destination_ip: bytes,
+             segment: bytes) -> list[bytes]:
+        if destination_ip != self.server_ip or len(segment) < 20:
+            return []
+        header = (segment[12] >> 4) * 4
+        if (header < 20 or header > len(segment) or
+                tcp_checksum(source_ip, destination_ip, segment) != 0):
+            self.tcp_dropped += 1
+            return []
+        source_port, destination_port, sequence, acknowledgment = \
+            struct.unpack("!HHII", segment[:12])
+        flags = segment[13]
+        payload = segment[header:]
+        if destination_port == 8 and (flags & 0x02):
+            return [self._tcp_segment(self.server_ip, source_ip, 8, source_port,
+                                      0, (sequence + 1) & 0xFFFFFFFF, 0x14)]
+        if destination_port != 7:
+            return []
+        key = (source_ip, source_port)
+        if flags & 0x02:                   # SYN
+            if flags & 0x10:               # 本对端只接受主动打开的第一个 SYN
+                self.tcp_dropped += 1
+                return []
+            connection = {"client_next": (sequence + 1) & 0xFFFFFFFF,
+                          "server_next": 0x1001}
+            self.tcp_connections[key] = connection
+            self.tcp_synacks += 1
+            return [self._tcp_segment(self.server_ip, source_ip, 7, source_port,
+                                      0x2000, connection["client_next"], 0x12,
+                                      corrupt_checksum=True),
+                    self._tcp_segment(self.server_ip, source_ip, 7, source_port,
+                                      0x1000, connection["client_next"],
+                                      0x12)]  # 坏 checksum 必须先被丢弃，再接收 SYN|ACK
+        connection = self.tcp_connections.get(key)
+        if connection is None:
+            return []
+        if flags & 0x04:                   # RST
+            self.tcp_connections.pop(key, None)
+            return []
+        if (flags & 0x10) and acknowledgment != connection["server_next"]:
+            self.tcp_dropped += 1
+            return []
+        responses = []
+        if payload:
+            if sequence != connection["client_next"]:
+                self.tcp_dropped += 1
+                return []
+            connection["client_next"] = (sequence + len(payload)) & 0xFFFFFFFF
+            responses.append(self._tcp_segment(
+                self.server_ip, source_ip, 7, source_port,
+                connection["server_next"], connection["client_next"], 0x19,
+                payload))                   # PSH|ACK|FIN：回显并被动关闭
+            connection["server_next"] = (connection["server_next"] +
+                                         len(payload) + 1) & 0xFFFFFFFF
+            self.tcp_echoes += 1
+        if flags & 0x01:                   # FIN
+            fin_sequence = sequence + len(payload)
+            if fin_sequence != connection["client_next"]:
+                self.tcp_dropped += 1
+                return responses
+            connection["client_next"] = (fin_sequence + 1) & 0xFFFFFFFF
+            responses.append(self._tcp_segment(
+                self.server_ip, source_ip, 7, source_port,
+                connection["server_next"], connection["client_next"], 0x11))
+            connection["server_next"] = (connection["server_next"] + 1) & 0xFFFFFFFF
+            self.tcp_fins += 1
+        return responses
+
     def handle(self, frame: bytes) -> list[bytes]:
         if len(frame) < 14:
             return []
@@ -206,6 +301,11 @@ class IPv4Peer:
             return [ethernet(source_mac, self.peer_mac, 0x0800,
                              self._ip(self.server_ip, source_ip, 1,
                                       bytes(reply)))]
+
+        if protocol == 6:
+            responses = self._tcp(source_ip, destination_ip, body)
+            return [ethernet(source_mac, self.peer_mac, 0x0800, response)
+                    for response in responses]
 
         if protocol != 17 or len(body) < 8:
             return []

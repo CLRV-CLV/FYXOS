@@ -11,10 +11,19 @@ struct fyx_socket;
 #define NET_IP_BROADCAST 0xFFFFFFFFu
 
 #define NET_AF_INET       2u
+#define NET_SOCK_STREAM   1u
 #define NET_SOCK_DGRAM    2u
+#define NET_IPPROTO_TCP   6u
 #define NET_IPPROTO_UDP   17u
 #define NET_MSG_DONTWAIT  1u
 #define NET_MAX_UDP_PAYLOAD 1472u
+#define NET_MAX_TCP_PAYLOAD 1460u
+
+#define NET_TCP_FIN 0x01u
+#define NET_TCP_SYN 0x02u
+#define NET_TCP_RST 0x04u
+#define NET_TCP_PSH 0x08u
+#define NET_TCP_ACK 0x10u
 
 /* 与 POSIX sockaddr_in 的 16 字节布局兼容；port/addr 为网络字节序。 */
 struct fyx_sockaddr_in {
@@ -45,6 +54,9 @@ struct net_stats {
     u64 udp_sent;
     u64 udp_received;
     u64 udp_dropped;
+    u64 tcp_sent;
+    u64 tcp_received;
+    u64 tcp_dropped;
 };
 
 int  net_init(void);
@@ -57,9 +69,15 @@ int  net_ping(u32 ip, u32 timeout_ms, u32 *rtt_ms);
 int  net_dns_resolve(const char *name, u32 *address, u32 timeout_ms);
 int  net_udp_send(u16 local_port, u32 remote_ip, u16 remote_port,
                   const void *data, size_t len);
+int  net_tcp_send(u16 local_port, u32 remote_ip, u16 remote_port,
+                  u32 sequence, u32 acknowledgment, u8 flags,
+                  const void *data, size_t len);
 
 /* 网络驱动收到的 UDP 数据报，由 socket 层派发给本地端口。 */
 void net_socket_udp_deliver(u16 local_port, u32 remote_ip, u16 remote_port,
+                            const void *data, size_t len);
+void net_socket_tcp_deliver(u16 local_port, u32 remote_ip, u16 remote_port,
+                            u32 sequence, u32 acknowledgment, u8 flags,
                             const void *data, size_t len);
 
 long sys_socket(u32 family, u32 type, u32 protocol);

@@ -68,6 +68,73 @@ static int run_network_test(void)
     return ok ? 0 : 1;
 }
 
+static int run_tcp_test(void)
+{
+    int fd = (int)sys_socket(FYX_AF_INET, FYX_SOCK_STREAM, FYX_IPPROTO_TCP);
+    if (fd == -17) {
+        sys_puts("[init] 网络离线，跳过 TCP socket 测试\n");
+        return 0;
+    }
+    if (fd < 0) {
+        sys_puts("[init] TCP socket 创建失败\n");
+        return 1;
+    }
+    int refused_fd = (int)sys_socket(FYX_AF_INET, FYX_SOCK_STREAM,
+                                     FYX_IPPROTO_TCP);
+    struct fyx_user_sockaddr_in refused_peer = { 0 };
+    refused_peer.family = FYX_AF_INET;
+    refused_peer.port = fyx_htons(8);
+    refused_peer.ip = fyx_ip(10, 0, 2, 2);
+    long refused = refused_fd < 0 ? -1 : sys_connect(refused_fd, &refused_peer);
+    if (refused_fd >= 0)
+        sys_close(refused_fd);
+    if (refused != -20) {
+        sys_puts("[init] TCP RST/拒绝连接测试失败\n");
+        sys_close(fd);
+        return 1;
+    }
+
+    struct fyx_user_sockaddr_in peer = { 0 };
+    peer.family = FYX_AF_INET;
+    peer.port = fyx_htons(7);         /* 台架 TCP echo 服务 */
+    peer.ip = fyx_ip(10, 0, 2, 2);
+    long connected = sys_connect(fd, &peer);
+    static const char message[] = "fyxos-ring3-tcp";
+    long sent = connected == 0
+        ? sys_fd_write(fd, message, sizeof(message) - 1) : -1;
+    char reply[sizeof(message)] = { 0 };
+    long received = 0;
+    while (sent == (long)(sizeof(message) - 1) &&
+           received < (long)(sizeof(message) - 1)) {
+        /* 故意小片读取：同一 TCP 段必须保留未消费部分。 */
+        long n = sys_fd_read(fd, reply + received, 3);
+        if (n <= 0)
+            break;
+        received += n;
+    }
+    long eof = received == (long)(sizeof(message) - 1)
+        ? sys_fd_read(fd, reply, 1) : -1;
+    int ok = received == (long)(sizeof(message) - 1) && eof == 0;
+    for (unsigned long i = 0; ok && i < sizeof(message) - 1; i++)
+        if (reply[i] != message[i])
+            ok = 0;
+    sys_close(fd);
+    if (!ok) {
+        sys_puts("[init] TCP 诊断 connect=");
+        fyx_put_u64((unsigned long)connected);
+        sys_puts(" sent=");
+        fyx_put_u64((unsigned long)sent);
+        sys_puts(" recv=");
+        fyx_put_u64((unsigned long)received);
+        sys_puts(" eof=");
+        fyx_put_u64((unsigned long)eof);
+        sys_puts("\n");
+    }
+    sys_puts(ok ? "[init] ring3 TCP socket 通过：SYN/RST/checksum/分段读取/FIN-EOF 一致\n"
+                : "[init] ring3 TCP socket 失败\n");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     /* exec 后重新进入同一个映像：只走这条短路径，避免再次 fork */
@@ -99,6 +166,8 @@ int main(int argc, char **argv, char **envp)
 
     /* 2) 真实用户态网络：标准 UDP echo 报文必须回到同一个 socket。 */
     if (run_network_test() != 0)
+        sys_exit(1);
+    if (run_tcp_test() != 0)
         sys_exit(1);
 
     /* 3) 持久化文件 fd：create/write/sync/seek/read/stat 全走 ring 3 ABI。 */

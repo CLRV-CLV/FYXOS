@@ -14,6 +14,7 @@
 #define ETH_ARP       0x0806
 #define ETH_IPV4      0x0800
 #define IP_ICMP       1
+#define IP_TCP        6
 #define IP_UDP        17
 #define NET_MAX_FRAME 1514u
 #define DHCP_XID      0x46595801u
@@ -36,7 +37,7 @@ static void write_be32(u8 *p, u32 v)
     p[2] = (u8)(v >> 8); p[3] = (u8)v;
 }
 
-static u16 internet_checksum(const void *data, size_t len)
+static u32 internet_sum(const void *data, size_t len)
 {
     const u8 *p = data;
     u32 sum = 0;
@@ -47,9 +48,19 @@ static u16 internet_checksum(const void *data, size_t len)
     }
     if (len)
         sum += (u16)p[0] << 8;
+    return sum;
+}
+
+static u16 internet_fold(u32 sum)
+{
     while (sum >> 16)
         sum = (sum & 0xFFFFu) + (sum >> 16);
-    return (u16)~sum;
+    return (u16)sum;
+}
+
+static u16 internet_checksum(const void *data, size_t len)
+{
+    return (u16)~internet_fold(internet_sum(data, len));
 }
 
 static struct {
@@ -404,6 +415,61 @@ static void handle_udp(u32 source_ip, const u8 *udp, size_t len)
                            udp + 8, udp_len - 8);
 }
 
+/* -------------------------------- TCP ----------------------------------- */
+static u16 tcp_checksum_value(u32 source, u32 destination,
+                              const u8 *tcp, size_t len)
+{
+    u8 pseudo[12];
+    write_be32(pseudo + 0, source);
+    write_be32(pseudo + 4, destination);
+    pseudo[8] = 0;
+    pseudo[9] = IP_TCP;
+    write_be16(pseudo + 10, (u16)len);
+    u32 sum = internet_sum(pseudo, sizeof(pseudo)) + internet_sum(tcp, len);
+    return (u16)~internet_fold(sum);
+}
+
+int net_tcp_send(u16 local_port, u32 remote_ip, u16 remote_port,
+                 u32 sequence, u32 acknowledgment, u8 flags,
+                 const void *data, size_t len)
+{
+    if (!g_net.ready || !local_port || !remote_ip || !remote_port)
+        return -FYX_ENETUNREACH;
+    if ((!data && len) || len > NET_MAX_TCP_PAYLOAD)
+        return -FYX_ERANGE;
+    u8 tcp[20 + NET_MAX_TCP_PAYLOAD];
+    memset(tcp, 0, 20);
+    write_be16(tcp + 0, local_port);
+    write_be16(tcp + 2, remote_port);
+    write_be32(tcp + 4, sequence);
+    write_be32(tcp + 8, acknowledgment);
+    tcp[12] = 5u << 4;
+    tcp[13] = flags;
+    write_be16(tcp + 14, 0xFFFFu);
+    if (len)
+        memcpy(tcp + 20, data, len);
+    write_be16(tcp + 16, tcp_checksum_value(g_net.ip, remote_ip, tcp, 20 + len));
+    int rc = ipv4_send(remote_ip, IP_TCP, tcp, 20 + len);
+    if (rc == 0)
+        g_net.stats.tcp_sent++;
+    return rc;
+}
+
+static void handle_tcp(u32 source_ip, const u8 *tcp, size_t len)
+{
+    if (len < 20 || (tcp[12] >> 4) < 5 ||
+        (size_t)(tcp[12] >> 4) * 4 > len ||
+        tcp_checksum_value(source_ip, g_net.ip, tcp, len) != 0) {
+        g_net.stats.tcp_dropped++;
+        return;
+    }
+    size_t header = (size_t)(tcp[12] >> 4) * 4;
+    g_net.stats.tcp_received++;
+    net_socket_tcp_deliver(read_be16(tcp + 2), source_ip, read_be16(tcp + 0),
+                           read_be32(tcp + 4), read_be32(tcp + 8), tcp[13],
+                           tcp + header, len - header);
+}
+
 static void handle_ipv4(const u8 *ip, size_t len)
 {
     if (len < 20 || (ip[0] >> 4) != 4)
@@ -422,6 +488,8 @@ static void handle_ipv4(const u8 *ip, size_t len)
         handle_icmp(source, ip + ihl, total - ihl);
     else if (ip[9] == IP_UDP)
         handle_udp(source, ip + ihl, total - ihl);
+    else if (ip[9] == IP_TCP)
+        handle_tcp(source, ip + ihl, total - ihl);
 }
 
 static void handle_ethernet(const void *packet, size_t len)

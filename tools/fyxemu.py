@@ -1469,6 +1469,7 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("ICMP 网关往返", "[net] ICMP 网关往返成功"),
         ("从磁盘加载 init", "从 /bin/init 读取可执行映像"),
         ("ring3 UDP socket", "[init] ring3 UDP socket 通过"),
+        ("ring3 TCP socket", "[init] ring3 TCP socket 通过"),
         ("Shell ifconfig", "eth0: UP"),
         ("Shell ping", "ICMP echo 回复"),
         ("用户态启动", "[init] === FYXOS 用户态已启动"),

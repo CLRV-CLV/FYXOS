@@ -67,7 +67,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF |
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
 | ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
-| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | PCI/Bus Master DMA、ARP/IPv4、DHCP/ICMP/UDP、DNS A 查询、共用 socket 队列 |
+| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP/UDP、DNS A、主动 TCP 客户端、ring3 socket 与流式读取 |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、四则/比较、if/else/while、字符串输出；直接生成静态 x86_64 ET_EXEC |
@@ -87,7 +87,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 24 + DNS 3 + 工具链/IDE 2 + Git/CLI 4 + 图形 3 + 存储 5
+make test           # full/quick 各 25 + DNS 3 + 工具链/IDE 2 + Git/CLI 4 + 图形 3 + 存储 5
 make test-network   # DNS 正/负向报文、错误 ID 过滤、ping 主机名与 ICMP
 make test-toolchain  # C/FyxJS 编译运行、诊断、Studio 编辑闭环与 PNG 校验
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -107,15 +107,16 @@ make test-storage   # 只重跑存储集成测试
 指针、数组、结构体、预处理器或 libc，不是完整 C/GCC/Clang。FyxJS 同样仅覆盖
 静态整数子集，没有动态类型、对象、闭包、数组、事件循环或 JS 库；完整多语言
 工具链仍未完成。Studio 也是单文件、末尾插入式首版，不是 VS Code 级 IDE。
-FYXGit 仅是上述受限 v1，不是完整 Git 兼容；TCP/IPv6、A/B 槽与独立救援环境
-仍未完成。
+FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B 槽与独立救援
+环境仍未完成。
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
-最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP 和单次 DNS A 查询，
-尚无 TCP、IPv6、TLS、DNS 缓存/重传/TCP 回退、IP 分片重组和 UDP checksum
-生成/校验。FYXFS v1 限 40 节点/16 快照，
-采用追加分配，尚未实现旧块回收、B 树、压缩、去重、GPT、AHCI/NVMe 和权限位；
+最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP、单次 DNS A 查询和
+主动 TCP 客户端；TCP 尚无 listen/server、重传、拥塞控制和乱序重组，也尚无
+IPv6、TLS、DNS 缓存/重传/TCP 回退、IP 分片重组和 UDP checksum 生成/校验。
+FYXFS v1 限 40 节点/16 快照，采用追加分配，尚未实现旧块回收、B 树、压缩、
+去重、GPT、AHCI/NVMe 和权限位；
 这些边界不会被算作已完成。
 
 ### 目录结构
@@ -154,7 +155,7 @@ docs/            规格与远景设计
 - [`docs/design/system-restore.md`](docs/design/system-restore.md) — 系统还原
 - [`docs/design/user-mode.md`](docs/design/user-mode.md) — 阶段 G 用户态实现与验证边界
 - [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现
-- [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP/DNS、异常报文与实跑验收边界
+- [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP/TCP/DNS、异常报文与实跑验收边界
 - [`docs/design/graphics.md`](docs/design/graphics.md) — BGA、软件光栅、桌面交互与帧校验边界
 - [`docs/design/fyxgit.md`](docs/design/fyxgit.md) — FYXGit v1 仓库格式、diff/restore 与跨重启边界
 - [`docs/design/fyxjs.md`](docs/design/fyxjs.md) — FyxJS 原生 JavaScript 子集前端与边界
