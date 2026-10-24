@@ -10,7 +10,7 @@
 
 ---
 
-## 当前进度：A–J 网络、还原与首版图形桌面核心已落地 ✅
+## 当前进度：A–L 原生 C 工具链与首版 FYX Studio 已落地 ✅
 
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
@@ -22,7 +22,8 @@ BIOS → MBR(stage1) → stage2(A20/E820/ELF 装载/建页表) → 长模式
      → 从 /bin/init 装载用户 ELF → ring 3 UDP/文件 I/O / fork / exec / 管道
      → ifconfig/ping/救援 Shell / 快照回滚
      → BGA LFB → 软件背 buffer → 三窗口桌面/主题/焦点 → PNG 帧校验
-     → 正常关机；另有跨重启与 ATA 写点断电恢复测试
+     → FYXFS C 源码 → 内置 fyxcc → x86_64 ELF → ring3 运行/退出码
+     → FYX Studio 编辑/保存/编译/运行 → 正常关机；另有跨重启与 ATA 写点断电恢复测试
 ```
 
 ### 快速开始
@@ -69,12 +70,14 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | PCI/Bus Master DMA、Ethernet/ARP/IPv4、DHCP/ICMP/UDP、socket fd |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
+| 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 无宿主依赖的常量表达式/字符串编译，生成静态 x86_64 ET_EXEC，诊断偏移可报告 |
+| FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
 | FYXFS | `kernel/fs/fyxfs.c` | 4KiB CoW 块、双超级块、CRC32、目录/extents、快照 |
 | VFS | `kernel/fs/vfs.c` | 路径/目录、文件对象、共享偏移、open/read/write/lseek |
 | 系统还原 | `kernel/fs/fyxfs.c` | O(1) 快照、事务式回滚，默认保留 `/home` |
 | 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与文件/进程验收 init |
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
-| 内核 Shell | `kernel/shell/shell.c` | 37 条命令，含 desktop、ifconfig/ping、文件、挂载、快照与首批跨系统别名 |
+| 内核 Shell | `kernel/shell/shell.c` | 41 条命令，含 desktop、ide、fyxcc/cc/run、ifconfig/ping、文件、挂载、快照与首批跨系统别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
 | 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
@@ -82,9 +85,10 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test          # 共 56 项：full/quick 各 24 + 图形 3 + 存储 5
-make test-graphics # 交互、PNG 像素、帧校验和、无 BGA 救援路径
-make test-storage  # 只重跑存储集成测试
+make test           # full/quick 各 24 + 工具链/IDE 2 + 图形 3 + 存储 5
+make test-toolchain  # 重复编译/运行、诊断、Studio 编辑闭环与 PNG 校验
+make test-graphics  # 交互、PNG 像素、帧校验和、无 BGA 救援路径
+make test-storage   # 只重跑存储集成测试
 ```
 
 断电测试在第 1、9、16、17 个 ATA 写扇区处分别停机并保留介质，再用同一镜像
@@ -93,7 +97,10 @@ make test-storage  # 只重跑存储集成测试
 
 图形首版仅支持 BGA 800×600 软件光栅化；没有 GPU/Vulkan、多显示器、鼠标、
 用户态窗口协议、完整字体/输入法和真实 RTC。桌面是内核态首版合成器，不能据此
-宣称完整 FyxWay/FyxUI、120Hz 或最终 IDE/工具链已完成。
+宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前只接受 `int main` 中的
+`puts/print("...")` 与整数常量表达式 `return`，不是完整 C/GCC/Clang；Studio
+也是单文件、末尾插入式首版，不是 VS Code 级 IDE。多语言编译器、git、TCP/IPv6、
+A/B 槽与独立救援环境仍未完成。
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是

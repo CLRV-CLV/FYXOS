@@ -60,6 +60,7 @@ static struct keybuf g_keybuf;
 static volatile u64 g_irq_count;
 static volatile u64 g_scancode_count;
 static bool g_shift;
+static bool g_ctrl;
 static bool g_capslock;
 static bool g_extended;
 static bool g_ready;
@@ -98,11 +99,19 @@ static void handle_scancode(u8 sc)
     if (released) {
         if (code == 0x2A || code == 0x36)      /* Shift */
             g_shift = false;
+        if (code == 0x1D)                       /* Ctrl */
+            g_ctrl = false;
         g_extended = false;
         return;
     }
 
     switch (code) {
+    case 0x01:                                  /* Esc */
+        keybuf_push(27);
+        return;
+    case 0x1D:                                  /* LCtrl */
+        g_ctrl = true;
+        return;
     case 0x2A:                                  /* LShift */
     case 0x36:                                  /* RShift */
         g_shift = true;
@@ -124,6 +133,10 @@ static void handle_scancode(u8 sc)
 
     bool upper = g_shift ^ g_capslock;
     char c = upper ? keymap_upper[code] : keymap_lower[code];
+    if (g_ctrl && c >= 'A' && c <= 'Z')
+        c = (char)(c - 'A' + 1);
+    else if (g_ctrl && c >= 'a' && c <= 'z')
+        c = (char)(c - 'a' + 1);
     if (c)
         keybuf_push(c);
 }
@@ -142,6 +155,7 @@ void keyboard_init(void)
 {
     memset(&g_keybuf, 0, sizeof(g_keybuf));
     g_shift = false;
+    g_ctrl = false;
     g_capslock = false;
     g_extended = false;
 

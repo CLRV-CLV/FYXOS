@@ -525,3 +525,65 @@ void process_start_init(void)
     kprintf("[proc] init 就绪：pid=%llu entry=0x%llx\n",
             (unsigned long long)p->pid, (unsigned long long)p->entry);
 }
+
+/* 回收没有父进程等待的退出映像（包括完成自检后退出的 init）。 */
+static void process_reap_orphans(void)
+{
+    for (u32 i = 0; i < MAX_PROCESSES; i++) {
+        struct process *p = &g_procs[i];
+        if (p->state != PROC_ZOMBIE || p->parent)
+            continue;
+        if (p->thread)
+            p->thread->proc = NULL;
+        if (g_init_proc == p)
+            g_init_proc = NULL;
+        process_free(p);
+    }
+}
+
+int process_run_wait(const char *name, int *exit_code)
+{
+    if (!name || !*name)
+        return -FYX_EINVAL;
+    process_reap_orphans();
+
+    struct process *p = process_create(name);
+    if (!p)
+        return -FYX_ENOMEM;
+    p->parent = NULL;
+
+    void *program = NULL;
+    size_t size = 0;
+    int rc = load_program_image(name, &program, &size);
+    if (rc != 0 || size == 0) {
+        process_free(p);
+        return rc != 0 ? rc : -FYX_EINVAL;
+    }
+    const char *argv[] = { name, NULL };
+    const char *envp[] = { "FYXOS=1", NULL };
+    rc = process_load_elf(p, program, size, argv, envp);
+    kfree(program);
+    if (rc != 0) {
+        process_free(p);
+        return rc;
+    }
+
+    struct thread *t = thread_create(name, process_thread_entry, p, 5);
+    if (!t) {
+        process_free(p);
+        return -FYX_ENOMEM;
+    }
+    init_user_regs(&t->uregs, p->entry, p->ustack_top);
+    t->proc = p;
+    t->pml4 = p->as.pml4;
+    p->thread = t;
+    p->state = PROC_RUNNABLE;
+
+    while (p->state != PROC_ZOMBIE)
+        thread_sleep_ms(1);
+    if (exit_code)
+        *exit_code = p->exit_code;
+    t->proc = NULL;
+    process_free(p);
+    return FYX_OK;
+}

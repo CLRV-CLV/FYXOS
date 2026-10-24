@@ -119,4 +119,7 @@ extern const u8 g_init_image_end[];
 
 void process_start_init(void);   /* 由 kmain 调用：装载并运行第一个用户进程 */
 
+/* 内核 Shell/IDE 启动一个磁盘 ELF，等待退出并回收；返回装载/调度错误。 */
+int  process_run_wait(const char *name, int *exit_code);
+
 #endif /* FYXOS_PROCESS_H */

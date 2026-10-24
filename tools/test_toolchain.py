@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""K/L 原生 C 子集工具链与 FYX Studio 端到端验收。
+
+每个用例都启动真实 FYXOS 内核；编译、ELF 装载、ring3 执行和 ATA 持久化
+均发生在 guest 内。宿主只注入按键并检查日志/PNG，不参与编译。
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+READY = "[init] 全部通过"
+
+
+def run_case(name, kernel, output_dir, keys, max_seconds, *, png=False):
+    cmd = [
+        sys.executable, str(ROOT / "tools/fyxemu.py"),
+        "--kernel", str(kernel), "--mode", "quick",
+        "--keys", keys, "--keys-after", READY,
+        "--test", "--max-seconds", str(max_seconds),
+    ]
+    png_path = output_dir / f"{name}.png"
+    if png:
+        cmd += ["--fb-output", str(png_path)]
+    result = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True,
+                            timeout=max_seconds + 30)
+    text = result.stdout + result.stderr
+    (output_dir / f"{name}.log").write_text(text, encoding="utf-8")
+    if result.returncode != 0:
+        raise RuntimeError(f"{name}: emulator exit {result.returncode}\n{text[-6000:]}")
+    if "[fyxemu] 测试通过" not in text or "正常关机" not in text:
+        raise RuntimeError(f"{name}: 未通过基础自检或正常关机")
+    if re.search(r"\[panic\]|kernel panic|内核 panic|CPU 异常", text, re.IGNORECASE):
+        raise RuntimeError(f"{name}: 出现 panic/CPU 异常")
+    return text, png_path
+
+
+def expect(text, needle, label):
+    if needle not in text:
+        raise RuntimeError(f"{label} 缺少 {needle!r}\n{text[-5000:]}")
+
+
+def check_png(path):
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise RuntimeError("IDE PNG signature 错误")
+    if struct.unpack("!II", data[16:24]) != (800, 600):
+        raise RuntimeError("IDE PNG 尺寸不是 800x600")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--kernel", default=str(ROOT / "build/fyxos.elf"))
+    ap.add_argument("--output-dir", default=str(ROOT / "build/toolchain-test"))
+    ap.add_argument("--max-seconds", type=int, default=120)
+    args = ap.parse_args()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    failures = 0
+
+    try:
+        # \; 是 fyxemu 的字面分号转义；普通分号仍分隔 Shell 命令。
+        keys = (
+            "ifconfig;ping;"
+            "write /home/user/repeat.c int main(){puts(\"REPEAT_OK\")\\;return(42)\\;};"
+            "fyxcc /home/user/repeat.c /home/user/repeat.elf;"
+            "run /home/user/repeat.elf;run /home/user/repeat.elf;"
+            "fyxcc /home/user/repeat.c /home/user/repeat.elf;"
+            "run /home/user/repeat.elf;run /home/user/repeat.elf;"
+            "write /home/user/bad.c int main(){return(};"
+            "fyxcc /home/user/bad.c /home/user/bad.elf;"
+            "run /home/user/repeat.elf;shutdown"
+        )
+        out, _ = run_case("repeat-and-diagnostic", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        exits = re.findall(r"\[proc\] exit: pid=\d+ code=42", out)
+        if len(exits) != 5 or out.count("REPEAT_OK") < 5:
+            raise RuntimeError(f"重复运行次数错误：exit42={len(exits)} output={out.count('REPEAT_OK')}")
+        if out.count("[cc] /home/user/repeat.c") != 2:
+            raise RuntimeError("重复编译次数错误")
+        expect(out, "编译失败", "非法源码")
+        expect(out, "偏移", "非法源码诊断")
+        expect(out, "[run] /home/user/repeat.elf 退出码=42", "退出码")
+        print("  [PASS] 重复编译/运行、真实退出码 42、非法源码诊断")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] Shell 工具链：{error}")
+
+    try:
+        keys = (
+            "ifconfig;ping;ide /home/user/studio.c;"
+            "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
+            "\\cS\\cB\\cR\\cQ;shutdown"
+        )
+        out, png = run_case("studio", args.kernel, output_dir, keys,
+                            args.max_seconds, png=True)
+        expect(out, "[ide] saved /home/user/studio.c", "IDE 保存")
+        expect(out, "[ide] built /home/user/studio.elf", "IDE 编译")
+        expect(out, "STUDIO_OK", "IDE 程序输出")
+        expect(out, "[ide] program exit=11", "IDE 程序退出码")
+        guest = re.findall(r"\[ide\] closed frames=\d+ checksum=0x([0-9a-fA-F]+)", out)
+        host = re.findall(r"framebuffer 已保存.*checksum=0x([0-9a-fA-F]+)", out)
+        if not guest or not host or guest[-1].lower() != host[-1].lower():
+            raise RuntimeError("IDE guest/host framebuffer 校验和不一致")
+        check_png(png)
+        print("  [PASS] IDE 空文件编辑→保存→编译→ring3 运行→PNG/校验和")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] FYX Studio：{error}")
+
+    print(f"工具链/IDE 专项：{'通过' if failures == 0 else '失败'}（{failures} 个失败）")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

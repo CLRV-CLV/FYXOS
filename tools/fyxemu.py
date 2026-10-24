@@ -287,6 +287,8 @@ class FyxEmu:
         self.iret_addr = 0
         self.HAS_ERR = frozenset((8, 10, 11, 12, 13, 14, 17, 21, 29, 30))
         self.tlb = {}
+        self.tlb_cr3 = None
+        self.last_cr3 = None
         self.trace_io = False
         self.net = None if no_net else RTL8139Device(self, quiet)
         self.bga = None if no_gfx else BGADevice(self, quiet)
@@ -381,10 +383,14 @@ class FyxEmu:
 
     def translate(self, vaddr):
         """四级页表遍历：虚拟地址 -> 物理地址；失败返回 None"""
+        cr3 = self.uc.reg_read(UC_X86_REG_CR3) & PTE_ADDR_MASK
+        if self.tlb_cr3 != cr3:
+            # 用户进程可复用同一虚拟地址；CR3 改变后旧翻译绝不能命中。
+            self.tlb.clear()
+            self.tlb_cr3 = cr3
         cached = self.tlb.get(vaddr >> 12)
         if cached is not None:
             return cached | (vaddr & 0xFFF)
-        cr3 = self.uc.reg_read(UC_X86_REG_CR3) & PTE_ADDR_MASK
         try:
             level = cr3
             for shift in (39, 30, 21):
@@ -1187,6 +1193,14 @@ class FyxEmu:
             if self._user_irq_grace:
                 run_count = 1
                 self._user_irq_grace = False
+            current_cr3 = uc.reg_read(UC_X86_REG_CR3) & PTE_ADDR_MASK
+            if self.last_cr3 != current_cr3:
+                # CR3 切换不仅使 Python 侧 TLB 失效，也要丢弃 Unicorn 已
+                # 翻译的基本块；否则同虚拟页可能继续执行上一个进程的代码。
+                self.tlb.clear()
+                self.tlb_cr3 = current_cr3
+                uc.ctl_flush_tb()
+                self.last_cr3 = current_cr3
             try:
                 uc.emu_start(self.get_rip(), 0, count=run_count)
             except UcError as e:
@@ -1247,8 +1261,23 @@ class FyxEmu:
                '<': ',', '>': '.', '?': '/'}
 
     def build_key_queue(self, script):
-        """把脚本文本转成 PS/2 扫描码序列（含 Shift 按下/松开与按键松开）"""
-        for ch in script:
+        """脚本文本转 PS/2；支持 Shift、Ctrl 和 \\cX 控制键转义。"""
+        i = 0
+        while i < len(script):
+            # \cS / \cB / \cR / \cQ 等用于 IDE 自动化，不需要改变文本协议。
+            if script[i] == "\\" and i + 1 < len(script) and script[i + 1] == "e":
+                self.key_queue.extend([0x01, 0x81])
+                i += 2
+                continue
+            if (script[i] == "\\" and i + 2 < len(script) and
+                    script[i + 1] == "c" and script[i + 2].isalpha()):
+                sc = self.SCANCODES.get(script[i + 2].lower())
+                if sc is not None:
+                    self.key_queue.extend([0x1D, sc, sc | 0x80, 0x9D])
+                i += 3
+                continue
+            ch = script[i]
+            i += 1
             if ch in self.SHIFTED:
                 base = self.SCANCODES[self.SHIFTED[ch]]
                 self.key_queue.extend([0x2A, base, base | 0x80, 0xAA])
@@ -1258,6 +1287,11 @@ class FyxEmu:
             elif ch in self.SCANCODES:
                 sc = self.SCANCODES[ch]
                 self.key_queue.extend([sc, sc | 0x80])
+            elif "\x01" <= ch <= "\x1a":
+                # 也接受已经解码的 Ctrl+A .. Ctrl+Z 字符。
+                sc = self.SCANCODES.get(chr(ord("a") + ord(ch) - 1))
+                if sc is not None:
+                    self.key_queue.extend([0x1D, sc, sc | 0x80, 0x9D])
             # 其余字符（如分号分隔符已被替换）忽略
 
     # --------------------------------- 运行 --------------------------------
@@ -1519,7 +1553,10 @@ def main() -> int:
                  no_gfx=args.no_gfx, fb_output=args.fb_output)
     emu.trace_io = args.trace_io
     if args.keys:
-        script = args.keys.replace(";", "\n").replace("\\n", "\n")
+        # 命令分隔符仍是分号；\; 允许把 C/脚本源码中的字面分号送进 Shell。
+        script = args.keys.replace("\\;", "\x01")
+        script = script.replace(";", "\n").replace("\\n", "\n")
+        script = script.replace("\x01", ";")
         if not script.endswith("\n"):
             script += "\n"          # 最后一条命令也要回车才会执行
         emu.build_key_queue(script)

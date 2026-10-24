@@ -18,6 +18,9 @@
 #include <fyxos/block.h>
 #include <fyxos/net.h>
 #include <fyxos/desktop.h>
+#include <fyxos/fyxcc.h>
+#include <fyxos/ide.h>
+#include <fyxos/process.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -100,7 +103,10 @@ static int cmd_snapshot(int argc, char **argv);
 static int cmd_rollback(int argc, char **argv);
 static int cmd_ifconfig(int argc, char **argv);
 static int cmd_ping(int argc, char **argv);
+static int cmd_ide(int argc, char **argv);
 static int cmd_desktop(int argc, char **argv);
+static int cmd_fyxcc(int argc, char **argv);
+static int cmd_run(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
     &(const struct command){ "help",     "help [命令]",       "显示命令列表或某个命令的用法", cmd_help },
@@ -140,6 +146,10 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "ifconfig", "ifconfig",           "显示 IPv4、MAC 与网络统计",      cmd_ifconfig },
     &(const struct command){ "ping",     "ping [IPv4] [毫秒]",  "向网关或指定 IPv4 发送 ICMP echo", cmd_ping },
     &(const struct command){ "desktop",  "desktop [run|next|theme|info]", "启动/控制软件合成图形桌面", cmd_desktop },
+    &(const struct command){ "ide",      "ide <source.c>",        "图形编辑器：保存/编译/运行",   cmd_ide },
+    &(const struct command){ "fyxcc",    "fyxcc <源文件> <ELF>", "内置 C 子集原生编译器",       cmd_fyxcc },
+    &(const struct command){ "cc",       "cc <源文件> <ELF>",   "fyxcc 的跨系统命令别名",       cmd_fyxcc },
+    &(const struct command){ "run",      "run <ELF>",           "从磁盘装载并等待用户程序",       cmd_run },
 };
 
 static const struct command *find_command(const char *name)
@@ -474,6 +484,25 @@ static int cmd_ping(int argc, char **argv)
     return 0;
 }
 
+static int cmd_ide(int argc, char **argv)
+{
+    if (argc != 2) {
+        kprintf("用法: ide <source.c>\n");
+        return 1;
+    }
+    int rc = ide_open(argv[1]);
+    if (rc != 0) {
+        kprintf("ide: 无法打开文件（%d）\n", rc);
+        return 1;
+    }
+    rc = ide_run();
+    if (rc != 0) {
+        kprintf("ide: 图形编辑器不可用（%d）\n", rc);
+        return 1;
+    }
+    return 0;
+}
+
 static int cmd_desktop(int argc, char **argv)
 {
     int rc;
@@ -497,6 +526,46 @@ static int cmd_desktop(int argc, char **argv)
         return 1;
     }
     return 0;
+}
+
+static int cmd_fyxcc(int argc, char **argv)
+{
+    if (argc < 3) {
+        kprintf("用法: %s <源文件> <输出ELF>\n", argv[0]);
+        return 1;
+    }
+    struct fyxcc_diagnostic diagnostic;
+    int rc = fyxcc_compile_file(argv[1], argv[2], &diagnostic);
+    if (rc != 0) {
+        kprintf("%s: 编译失败（错误 %d）", argv[0], rc);
+        if (diagnostic.message[0])
+            kprintf("：%s（偏移 %u）", diagnostic.message,
+                    (unsigned)diagnostic.offset);
+        kprintf("\n");
+        return 1;
+    }
+    struct vfs_stat st;
+    if (vfs_stat(argv[2], &st) != 0)
+        return 1;
+    kprintf("[cc] %s -> %s（%llu 字节，x86_64 ET_EXEC）\n",
+            argv[1], argv[2], (unsigned long long)st.size);
+    return 0;
+}
+
+static int cmd_run(int argc, char **argv)
+{
+    if (argc < 2) {
+        kprintf("用法: run <ELF>\n");
+        return 1;
+    }
+    int status = 0;
+    int rc = process_run_wait(argv[1], &status);
+    if (rc != 0) {
+        kprintf("run: 无法启动 %s（错误 %d）\n", argv[1], rc);
+        return 1;
+    }
+    kprintf("[run] %s 退出码=%d\n", argv[1], status);
+    return status;
 }
 
 /* ========================== 文件与系统还原 ============================== */
