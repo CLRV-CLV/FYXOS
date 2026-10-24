@@ -26,6 +26,7 @@
 #include <fyxos/boot_info.h>
 #include <fyxos/process.h>
 #include <fyxos/storage.h>
+#include <fyxos/net.h>
 
 extern u8 _kernel_end[], _kernel_phys_end[];
 extern u8 _text_start[], _text_end[], _bss_start[], _bss_end[];
@@ -212,6 +213,9 @@ void kmain(struct fyx_boot_info *bi)
     process_init();
     if (storage_init() != 0)
         panic("storage: 无法启动持久化存储栈");
+    int net_rc = net_init();
+    if (net_rc != 0)
+        kprintf("[net] 初始化未完成（错误 %d），仅提供离线功能\n", net_rc);
     process_start_init();
 
     kprintf("\n[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令\n");

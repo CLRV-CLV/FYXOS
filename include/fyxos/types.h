@@ -67,5 +67,9 @@ typedef int                bool;
 #define FYX_ENOTEMPTY 14
 #define FYX_ERANGE  15
 #define FYX_EBUSY   16
+#define FYX_ENETUNREACH 17  /* 网卡/地址/下一跳不可用 */
+#define FYX_ETIMEDOUT 18    /* 协议回应超时 */
+#define FYX_EADDRINUSE 19   /* 本地 UDP 端口已绑定 */
+#define FYX_ENOTCONN 20     /* 未 connect 且未提供目的地址 */
 
 #endif /* FYXOS_TYPES_H */

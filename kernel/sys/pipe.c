@@ -20,6 +20,7 @@
 #include <fyxos/sched.h>
 #include <fyxos/sync.h>
 #include <fyxos/vfs.h>
+#include <fyxos/socket.h>
 
 #define PIPE_CAPACITY 512u
 
@@ -106,6 +107,7 @@ static void fd_clear(struct fyx_fd *fd)
 {
     fd->pipe = NULL;
     fd->file = NULL;
+    fd->socket = NULL;
     fd->type = FYX_FD_NONE;
     fd->flags = 0;
 }
@@ -123,6 +125,8 @@ long sys_close(int fd)
         pipe_release_endpoint(entry.pipe, entry.flags);
     else if (entry.type == FYX_FD_FILE)
         return vfs_file_close(entry.file);
+    else if (entry.type == FYX_FD_SOCKET)
+        socket_release(entry.socket);
     return 0;
 }
 
@@ -139,6 +143,8 @@ void pipe_close_all(struct process *p)
             pipe_release_endpoint(entry.pipe, entry.flags);
         else if (entry.type == FYX_FD_FILE)
             vfs_file_close(entry.file);
+        else if (entry.type == FYX_FD_SOCKET)
+            socket_release(entry.socket);
     }
 }
 
@@ -154,6 +160,10 @@ void pipe_clone_fds(struct process *child, const struct process *parent)
         child->fds[i] = *source;
         if (source->type == FYX_FD_FILE) {
             vfs_file_ref(source->file);
+            continue;
+        }
+        if (source->type == FYX_FD_SOCKET) {
+            socket_ref(source->socket);
             continue;
         }
         if (source->type != FYX_FD_PIPE || !source->pipe)
@@ -178,6 +188,9 @@ long sys_fd_read(int fd, void *buf, size_t len)
     if (p && fd >= 0 && fd < PROC_MAX_FDS &&
         p->fds[fd].type == FYX_FD_FILE)
         return vfs_file_read(p->fds[fd].file, buf, len);
+    if (p && fd >= 0 && fd < PROC_MAX_FDS &&
+        p->fds[fd].type == FYX_FD_SOCKET)
+        return sys_recvfrom(fd, buf, len, 0, NULL, NULL);
     struct fyx_pipe *pipe = fd_pipe(p, fd, FYX_FD_READ);
     if (!pipe)
         return -FYX_EBADF;
@@ -219,6 +232,9 @@ long sys_fd_write(int fd, const void *buf, size_t len)
     if (p && fd >= 0 && fd < PROC_MAX_FDS &&
         p->fds[fd].type == FYX_FD_FILE)
         return vfs_file_write(p->fds[fd].file, buf, len);
+    if (p && fd >= 0 && fd < PROC_MAX_FDS &&
+        p->fds[fd].type == FYX_FD_SOCKET)
+        return sys_sendto(fd, buf, len, 0, NULL, 0);
     struct fyx_pipe *pipe = fd_pipe(p, fd, FYX_FD_WRITE);
     if (!pipe)
         return -FYX_EBADF;

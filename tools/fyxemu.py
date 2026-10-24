@@ -75,6 +75,8 @@ except ImportError:
           file=sys.stderr)
     sys.exit(2)
 
+from rtl8139 import RTL8139Device
+
 # --------------------------------------------------------------------------
 # 常量
 # --------------------------------------------------------------------------
@@ -203,7 +205,7 @@ class FyxEmu:
                  keys=None, show_bios=False, max_seconds=120, quiet=False,
                  tick_every=20000, chunk=20000, trace_syscalls=False,
                  keys_after=None, writeback=False, disk_output=None,
-                 power_fail_after=None, power_fail_write=1):
+                 power_fail_after=None, power_fail_write=1, no_net=False):
         self.image_path = image
         self.kernel_path = kernel
         self.ram_bytes = ram_mb * 1024 * 1024
@@ -282,6 +284,8 @@ class FyxEmu:
         self.iret_addr = 0
         self.HAS_ERR = frozenset((8, 10, 11, 12, 13, 14, 17, 21, 29, 30))
         self.tlb = {}
+        self.trace_io = False
+        self.net = None if no_net else RTL8139Device(self, quiet)
 
         # ATA PIO 模型（端口 0x1F0..0x1F7 / 0x3F6）。与真机一样，命令先
         # 设置 LBA/计数寄存器，再通过 DATA 端口逐字传输 256 个 word。
@@ -925,6 +929,9 @@ class FyxEmu:
 
     # ------------------------------ 端口 I/O -------------------------------
     def port_in(self, uc, port, size):
+        if self.net and self.net.handles(port):
+            self.net._io_in(uc, port, size)
+            return uc.reg_read(UC_X86_REG_RAX) & ((1 << (size * 8)) - 1)
         if 0x1F0 <= port <= 0x1F7 or port == 0x3F6:
             if port == 0x1F0:
                 return self.ata_data_in(size)
@@ -954,6 +961,9 @@ class FyxEmu:
         raw = uc.reg_read(UC_X86_REG_RAX if self.phase == 2
                           else UC_X86_REG_EAX)
         value = raw & ((1 << (size * 8)) - 1)
+        if self.net and self.net.handles(port):
+            self.net._io_out(uc, port, size, value)
+            return
         if 0x1F0 <= port <= 0x1F7 or port == 0x3F6:
             if port == 0x1F0:
                 self.ata_data_out(value, size)
@@ -1090,7 +1100,6 @@ class FyxEmu:
         uc.hook_add(UC_HOOK_INSN,
                     lambda u, p, s, v, d: self.port_out(u, p, s, v),
                     None, 1, 0, UC_X86_INS_OUT)
-
         return self.phase2_loop()
 
     EXC_NAMES = {0: "#DE 除零", 1: "#DB 调试", 2: "NMI", 3: "#BP 断点",
@@ -1402,7 +1411,13 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("自检全部通过", "自检全部通过"),
         ("调度演示完成", "demo-a 计数="),
         ("ATA 与 FYXFS 挂载", "持久化文件系统就绪"),
+        ("DHCP 地址配置", "[net] DHCP 完成"),
+        ("ARP 下一跳解析", "[net] ARP 网关"),
+        ("ICMP 网关往返", "[net] ICMP 网关往返成功"),
         ("从磁盘加载 init", "从 /bin/init 读取可执行映像"),
+        ("ring3 UDP socket", "[init] ring3 UDP socket 通过"),
+        ("Shell ifconfig", "eth0: UP"),
+        ("Shell ping", "ICMP echo 回复"),
         ("用户态启动", "[init] === FYXOS 用户态已启动"),
         ("用户态文件系统调用", "FYXFS 文件读写与 seek"),
         ("fork 子进程返回 0", "fork 返回 0"),
@@ -1450,6 +1465,10 @@ def main() -> int:
     ap.add_argument("--tick-every", type=int, default=20000,
                     help="每多少条指令注入一次时钟中断")
     ap.add_argument("--chunk", type=int, default=20000)
+    ap.add_argument("--trace-io", action="store_true",
+                    help="跟踪 RTL8139 等端口 I/O")
+    ap.add_argument("--no-net", action="store_true",
+                    help="不安装 RTL8139，用于离线诊断")
     args = ap.parse_args()
 
     emu = FyxEmu(image=args.image, kernel=args.kernel, ram_mb=args.ram_mb,
@@ -1459,7 +1478,8 @@ def main() -> int:
                  keys_after=args.keys_after, writeback=args.writeback,
                  disk_output=args.disk_output,
                  power_fail_after=args.power_fail_after,
-                 power_fail_write=args.power_fail_write)
+                 power_fail_write=args.power_fail_write, no_net=args.no_net)
+    emu.trace_io = args.trace_io
     if args.keys:
         script = args.keys.replace(";", "\n").replace("\\n", "\n")
         if not script.endswith("\n"):

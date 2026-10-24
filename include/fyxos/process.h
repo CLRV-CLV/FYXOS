@@ -38,17 +38,20 @@
 
 struct fyx_pipe;
 struct fyx_file;
+struct fyx_socket;
 
 enum fyx_fd_type {
     FYX_FD_NONE = 0,
     FYX_FD_PIPE = 1,
     FYX_FD_FILE = 2,
+    FYX_FD_SOCKET = 3,
 };
 
-/* fd 是进程表项；文件偏移与管道端点生命周期由被引用对象维护。 */
+/* fd 是进程表项；文件偏移、管道端点与 socket 生命周期由被引用对象维护。 */
 struct fyx_fd {
     struct fyx_pipe *pipe;
     struct fyx_file *file;
+    struct fyx_socket *socket;
     u8               type;        /* enum fyx_fd_type */
     u8               flags;       /* FYX_FD_READ / FYX_FD_WRITE */
 };

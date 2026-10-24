@@ -16,6 +16,7 @@
 #include <fyxos/vfs.h>
 #include <fyxos/storage.h>
 #include <fyxos/block.h>
+#include <fyxos/net.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -96,6 +97,8 @@ static int cmd_mount(int argc, char **argv);
 static int cmd_unmount(int argc, char **argv);
 static int cmd_snapshot(int argc, char **argv);
 static int cmd_rollback(int argc, char **argv);
+static int cmd_ifconfig(int argc, char **argv);
+static int cmd_ping(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
     &(const struct command){ "help",     "help [命令]",       "显示命令列表或某个命令的用法", cmd_help },
@@ -132,6 +135,8 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "unmount",  "unmount",           "卸载系统分区",                   cmd_unmount },
     &(const struct command){ "snapshot", "snapshot [create 名]", "列出或创建 CoW 快照",         cmd_snapshot },
     &(const struct command){ "rollback", "rollback <id> [all]", "回滚；默认保留 /home",          cmd_rollback },
+    &(const struct command){ "ifconfig", "ifconfig",           "显示 IPv4、MAC 与网络统计",      cmd_ifconfig },
+    &(const struct command){ "ping",     "ping [IPv4] [毫秒]",  "向网关或指定 IPv4 发送 ICMP echo", cmd_ping },
 };
 
 static const struct command *find_command(const char *name)
@@ -372,6 +377,98 @@ static int cmd_shutdown(int argc, char **argv)
 static int cmd_exit(int argc, char **argv)
 {
     return cmd_shutdown(argc, argv);
+}
+
+/* ============================== 网络 ==================================== */
+static void shell_print_ip(u32 ip)
+{
+    kprintf("%u.%u.%u.%u", (ip >> 24) & 0xFF, (ip >> 16) & 0xFF,
+            (ip >> 8) & 0xFF, ip & 0xFF);
+}
+
+static bool shell_parse_ip(const char *text, u32 *out)
+{
+    if (!text || !out)
+        return false;
+    u32 value = 0;
+    for (u32 part = 0; part < 4; part++) {
+        char *end = NULL;
+        unsigned long n = strtoul(text, &end, 10);
+        if (end == text || n > 255 || (part < 3 && *end != '.') ||
+            (part == 3 && *end != '\0'))
+            return false;
+        value = (value << 8) | (u32)n;
+        text = end + (part < 3 ? 1 : 0);
+    }
+    *out = value;
+    return true;
+}
+
+static int cmd_ifconfig(int argc, char **argv)
+{
+    UNUSED(argc);
+    UNUSED(argv);
+    if (!net_present()) {
+        kprintf("eth0: 离线（未发现 RTL8139）\n");
+        return 0;
+    }
+    net_poll();                         /* 也覆盖空环/待收包两种 poll 路径 */
+    struct net_info info;
+    struct net_stats stats;
+    net_get_info(&info);
+    net_get_stats(&stats);
+    kprintf("eth0: %s\n", info.ready ? "UP" : "DOWN");
+    kprintf("  MAC  %02x:%02x:%02x:%02x:%02x:%02x\n",
+            info.mac[0], info.mac[1], info.mac[2], info.mac[3],
+            info.mac[4], info.mac[5]);
+    kprintf("  IPv4 "); shell_print_ip(info.ip);
+    kprintf("  掩码 "); shell_print_ip(info.netmask);
+    kprintf("  网关 "); shell_print_ip(info.gateway); kprintf("\n");
+    kprintf("  网关 MAC %02x:%02x:%02x:%02x:%02x:%02x (%s)\n",
+            info.gateway_mac[0], info.gateway_mac[1], info.gateway_mac[2],
+            info.gateway_mac[3], info.gateway_mac[4], info.gateway_mac[5],
+            info.gateway_mac_valid ? "已解析" : "未解析");
+    kprintf("  RX=%llu TX=%llu 错误=%llu ARP请求=%llu ARP回应=%llu "
+            "ICMP回应=%llu UDP收/发=%llu/%llu\n",
+            (unsigned long long)stats.rx_packets,
+            (unsigned long long)stats.tx_packets,
+            (unsigned long long)stats.rx_errors,
+            (unsigned long long)stats.arp_requests,
+            (unsigned long long)stats.arp_replies,
+            (unsigned long long)stats.icmp_echo_replies,
+            (unsigned long long)stats.udp_received,
+            (unsigned long long)stats.udp_sent);
+    return 0;
+}
+
+static int cmd_ping(int argc, char **argv)
+{
+    if (!net_ready()) {
+        kprintf("ping: 网络尚未就绪\n");
+        return 1;
+    }
+    struct net_info info;
+    net_get_info(&info);
+    u32 destination = info.gateway;
+    if (argc > 1 && !shell_parse_ip(argv[1], &destination)) {
+        kprintf("ping: 需要点分十进制 IPv4 地址\n");
+        return 1;
+    }
+    u32 timeout = argc > 2 ? (u32)strtoul(argv[2], NULL, 0) : 100;
+    if (!timeout)
+        timeout = 100;
+    u32 rtt = 0;
+    int rc = net_ping(destination, timeout, &rtt);
+    if (rc != 0) {
+        kprintf("ping: ");
+        shell_print_ip(destination);
+        kprintf(" 失败（错误 %d）\n", rc);
+        return 1;
+    }
+    kprintf("ping ");
+    shell_print_ip(destination);
+    kprintf(": ICMP echo 回复，time=%u ms\n", rtt);
+    return 0;
 }
 
 /* ========================== 文件与系统还原 ============================== */

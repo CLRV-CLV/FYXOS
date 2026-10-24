@@ -55,6 +55,13 @@ enum fyx_syscall {
     SYS_UNLINK      = 0x101F,   /* (const char *path) */
     SYS_SYNC        = 0x1020,   /* () */
 
+    /* ---- 阶段 I：IPv4 UDP socket ---- */
+    SYS_SOCKET      = 0x1021,   /* (domain, type, protocol) -> fd */
+    SYS_BIND        = 0x1022,   /* (fd, sockaddr_in *, addrlen) */
+    SYS_CONNECT     = 0x1023,   /* (fd, sockaddr_in *, addrlen) */
+    SYS_SENDTO      = 0x1024,   /* (fd, buf, len, flags, dst, addrlen) */
+    SYS_RECVFROM    = 0x1025,   /* (fd, buf, len, flags, src, addrlen *) */
+
     SYS_MAX
 };
 

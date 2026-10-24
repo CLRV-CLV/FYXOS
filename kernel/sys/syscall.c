@@ -13,6 +13,8 @@
 #include <fyxos/x86_64.h>
 #include <fyxos/process.h>
 #include <fyxos/pipe.h>
+#include <fyxos/net.h>
+#include <fyxos/socket.h>
 
 extern void syscall_entry(void);
 
@@ -67,9 +69,6 @@ static long sys_thread_create(const char *name, void *fn, void *arg)
 long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
                       u64 a6)
 {
-    UNUSED(a4);
-    UNUSED(a5);
-    UNUSED(a6);
     g_syscall_count++;
 
     /*
@@ -240,6 +239,29 @@ long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
 
     case SYS_SYNC:
         return sys_sync();
+
+    case SYS_SOCKET:
+        return sys_socket((u32)a1, (u32)a2, (u32)a3);
+
+    case SYS_BIND:
+        return sys_bind((int)a1, (const struct fyx_sockaddr_in *)(uintptr_t)a2,
+                        (u32)a3);
+
+    case SYS_CONNECT:
+        return sys_connect((int)a1,
+                           (const struct fyx_sockaddr_in *)(uintptr_t)a2,
+                           (u32)a3);
+
+    case SYS_SENDTO:
+        return sys_sendto((int)a1, (const void *)(uintptr_t)a2, (size_t)a3,
+                          (u32)a4,
+                          (const struct fyx_sockaddr_in *)(uintptr_t)a5,
+                          (u32)a6);
+
+    case SYS_RECVFROM:
+        return sys_recvfrom((int)a1, (void *)(uintptr_t)a2, (size_t)a3,
+                            (u32)a4, (struct fyx_sockaddr_in *)(uintptr_t)a5,
+                            (size_t *)(uintptr_t)a6);
 
     default:
         g_syscall_unknown++;

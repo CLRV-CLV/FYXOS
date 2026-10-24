@@ -111,7 +111,7 @@ fyx-rescue> list snapshots
 fyx-rescue> rollback system --to=T5
 fyx-rescue> check disk /            # 校验并修复
 fyx-rescue> mount @home /mnt        # 挂载个人文件以便拷出
-fyx-rescue> shell                    # 进入完整内核 Shell（当前 34 条命令）
+fyx-rescue> shell                    # 进入完整内核 Shell（当前 36 条命令）
 ```
 
 3. **离线还原介质**：`fyx image --rescue` 可生成 USB 镜像；

@@ -39,6 +39,11 @@ typedef long          ssize_t_;
 #define SYS_MKDIR       0x101E
 #define SYS_UNLINK      0x101F
 #define SYS_SYNC        0x1020
+#define SYS_SOCKET      0x1021
+#define SYS_BIND        0x1022
+#define SYS_CONNECT     0x1023
+#define SYS_SENDTO      0x1024
+#define SYS_RECVFROM    0x1025
 
 #define FYX_O_RDONLY    0x00
 #define FYX_O_WRONLY    0x01
@@ -82,6 +87,9 @@ static inline long fyx_syscall(long n, long a1, long a2, long a3,
 #define SYS1(n, a)         fyx_syscall((n), (long)(a), 0, 0, 0, 0, 0)
 #define SYS2(n, a, b)      fyx_syscall((n), (long)(a), (long)(b), 0, 0, 0, 0)
 #define SYS3(n, a, b, c)   fyx_syscall((n), (long)(a), (long)(b), (long)(c), 0, 0, 0)
+#define SYS4(n, a, b, c, d) fyx_syscall((n), (long)(a), (long)(b), (long)(c), (long)(d), 0, 0)
+#define SYS5(n, a, b, c, d, e) fyx_syscall((n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), 0)
+#define SYS6(n, a, b, c, d, e, f) fyx_syscall((n), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), (long)(f))
 
 static inline long sys_write(const char *s, unsigned long n)
 {
@@ -138,6 +146,52 @@ static inline long sys_mkdir(const char *path)
 }
 static inline long sys_unlink(const char *path) { return SYS1(SYS_UNLINK, path); }
 static inline long sys_sync(void)               { return SYS0(SYS_SYNC); }
+
+#define FYX_AF_INET       2
+#define FYX_SOCK_DGRAM    2
+#define FYX_IPPROTO_UDP   17
+#define FYX_MSG_DONTWAIT  1
+
+struct fyx_user_sockaddr_in {
+    unsigned short family;
+    unsigned short port;             /* 网络字节序 */
+    unsigned int ip;                 /* A.B.C.D 的 32 位数值 */
+    unsigned char zero[8];
+};
+
+static inline unsigned short fyx_htons(unsigned short v)
+{
+    return (unsigned short)((v << 8) | (v >> 8));
+}
+static inline unsigned int fyx_ip(unsigned int a, unsigned int b,
+                                  unsigned int c, unsigned int d)
+{
+    return (a << 24) | (b << 16) | (c << 8) | d;
+}
+static inline long sys_socket(unsigned long domain, unsigned long type,
+                              unsigned long protocol)
+{
+    return SYS3(SYS_SOCKET, domain, type, protocol);
+}
+static inline long sys_bind(int fd, struct fyx_user_sockaddr_in *address)
+{
+    return SYS3(SYS_BIND, fd, address, sizeof(*address));
+}
+static inline long sys_connect(int fd, struct fyx_user_sockaddr_in *address)
+{
+    return SYS3(SYS_CONNECT, fd, address, sizeof(*address));
+}
+static inline long sys_sendto(int fd, const void *buffer, unsigned long len,
+                              struct fyx_user_sockaddr_in *destination)
+{
+    return SYS6(SYS_SENDTO, fd, buffer, len, 0, destination,
+                destination ? sizeof(*destination) : 0);
+}
+static inline long sys_recvfrom(int fd, void *buffer, unsigned long len,
+                                struct fyx_user_sockaddr_in *source)
+{
+    return SYS6(SYS_RECVFROM, fd, buffer, len, 0, source, 0);
+}
 static inline long sys_shutdown(long code)  { return SYS1(SYS_SHUTDOWN, code); }
 
 /* --- 几个不依赖内核的小工具，免得引入外部 libc --- */

@@ -219,7 +219,7 @@ fyx-gfx    = ">=0.9"
 
 工具链**只**依赖内核的公开 ABI：
 
-- 16 个系统调用（当前 `include/fyxos/syscall.h` 已定义，编号 0x1000 起）
+- 当前已定义 38 个系统调用（`include/fyxos/syscall.h`，编号 0x1000 起；后续工具链所需接口仍需补齐）
 - `procfs`/`sysfs` 提供的只读信息
 - `.fyx` 包格式
 - 文件权限与能力（capability）模型

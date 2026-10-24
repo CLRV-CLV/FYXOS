@@ -12,6 +12,62 @@
 
 #define TICKS_TO_SPIN 5
 
+static int run_network_test(void)
+{
+    int fd = (int)sys_socket(FYX_AF_INET, FYX_SOCK_DGRAM, FYX_IPPROTO_UDP);
+    if (fd == -17) {
+        sys_puts("[init] 网络离线，跳过 UDP socket 测试\n");
+        return 0;
+    }
+    if (fd < 0) {
+        sys_puts("[init] UDP socket 创建失败\n");
+        return 1;
+    }
+    struct fyx_user_sockaddr_in local = { 0 };
+    local.family = FYX_AF_INET;
+    local.port = fyx_htons(40000);
+    long bind_rc = sys_bind(fd, &local);
+    if (bind_rc != 0) {
+        sys_puts("[init] UDP bind 失败，rc=");
+        fyx_put_u64((unsigned long)bind_rc);
+        sys_puts("\n");
+        sys_close(fd);
+        return 1;
+    }
+    struct fyx_user_sockaddr_in peer = { 0 };
+    peer.family = FYX_AF_INET;
+    peer.port = fyx_htons(9);         /* 台架 UDP echo 服务 */
+    peer.ip = fyx_ip(10, 0, 2, 2);
+    static const char message[] = "fyxos-ring3-udp";
+    long sent = sys_sendto(fd, message, sizeof(message) - 1, &peer);
+    char reply[64] = { 0 };
+    struct fyx_user_sockaddr_in source = { 0 };
+    long received = sent == (long)(sizeof(message) - 1)
+        ? sys_recvfrom(fd, reply, sizeof(reply), &source) : -1;
+    int ok = received == (long)(sizeof(message) - 1) &&
+        source.ip == peer.ip && source.port == peer.port;
+    for (unsigned long i = 0; ok && i < sizeof(message) - 1; i++)
+        if (reply[i] != message[i])
+            ok = 0;
+    sys_close(fd);
+    if (!ok) {
+        sys_puts("[init] UDP 诊断 fd=");
+        fyx_put_u64((unsigned long)fd);
+        sys_puts(" sent=");
+        fyx_put_u64((unsigned long)sent);
+        sys_puts(" recv=");
+        fyx_put_u64((unsigned long)received);
+        sys_puts(" source_ip=");
+        fyx_put_u64(source.ip);
+        sys_puts(" source_port=");
+        fyx_put_u64(fyx_htons(source.port));
+        sys_puts("\n");
+    }
+    sys_puts(ok ? "[init] ring3 UDP socket 通过：DHCP/ARP/IPv4/UDP 收发一致\n"
+                : "[init] ring3 UDP socket 失败\n");
+    return ok ? 0 : 1;
+}
+
 int main(int argc, char **argv, char **envp)
 {
     /* exec 后重新进入同一个映像：只走这条短路径，避免再次 fork */
@@ -41,7 +97,11 @@ int main(int argc, char **argv, char **envp)
     sys_puts(envp && envp[0] ? envp[0] : "(null)");
     sys_puts("\n");
 
-    /* 2) 持久化文件 fd：create/write/sync/seek/read/stat 全走 ring 3 ABI。 */
+    /* 2) 真实用户态网络：标准 UDP echo 报文必须回到同一个 socket。 */
+    if (run_network_test() != 0)
+        sys_exit(1);
+
+    /* 3) 持久化文件 fd：create/write/sync/seek/read/stat 全走 ring 3 ABI。 */
     static const char file_msg[] = "ring3-storage-ok";
     int filefd = sys_open("/home/user/ring3.txt",
                           FYX_O_RDWR | FYX_O_CREAT | FYX_O_TRUNC);

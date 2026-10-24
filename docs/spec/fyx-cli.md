@@ -178,8 +178,9 @@ fyxsh> iwconfig
 
 ## 5. 与当前内核 Shell 的关系
 
-`kernel/shell/shell.c` 当前有 34 条命令：最初 16 条内核诊断命令，加上文件、
-挂载、FYXFS 校验、快照/回滚及 `dir/type/md/del` 等首批别名。它仍是
+`kernel/shell/shell.c` 当前有 36 条命令：最初 16 条内核诊断命令，加上文件、
+挂载、FYXFS 校验、快照/回滚、`dir/type/md/del` 等首批别名，以及阶段 I 的
+`ifconfig/ping`。它仍是
 **内核态救援 Shell**，不是最终用户终端，也不代表下列兼容规范已完整实现。
 
 后续用户态 `fyxsh` 将接管：

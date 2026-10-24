@@ -177,8 +177,8 @@ emu-quick: $(KERNEL_ELF)
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick $(EMU_ARGS)
 
 test: image
-	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
-	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
+	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
+	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --test --max-seconds 60
 	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
 
 test-storage: image
