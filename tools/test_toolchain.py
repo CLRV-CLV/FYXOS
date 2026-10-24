@@ -72,6 +72,9 @@ def main():
             "run /home/user/repeat.elf;run /home/user/repeat.elf;"
             "fyxcc /home/user/repeat.c /home/user/repeat.elf;"
             "run /home/user/repeat.elf;run /home/user/repeat.elf;"
+            "write /home/user/control.c int main(){int x=0\\;while(x<6){x=x+1\\;}if(x==6){x=x*7\\;}else{x=1\\;}if(x<42){x=0\\;}else{x=x+0\\;}puts(\"CONTROL_OK\")\\;return x\\;};"
+            "fyxcc /home/user/control.c /home/user/control.elf;"
+            "run /home/user/control.elf;"
             "write /home/user/bad.c int main(){return(};"
             "fyxcc /home/user/bad.c /home/user/bad.elf;"
             "run /home/user/repeat.elf;shutdown"
@@ -79,14 +82,16 @@ def main():
         out, _ = run_case("repeat-and-diagnostic", args.kernel, output_dir,
                           keys, args.max_seconds)
         exits = re.findall(r"\[proc\] exit: pid=\d+ code=42", out)
-        if len(exits) != 5 or out.count("REPEAT_OK") < 5:
+        if len(exits) != 6 or out.count("REPEAT_OK") < 5:
             raise RuntimeError(f"重复运行次数错误：exit42={len(exits)} output={out.count('REPEAT_OK')}")
         if out.count("[cc] /home/user/repeat.c") != 2:
             raise RuntimeError("重复编译次数错误")
         expect(out, "编译失败", "非法源码")
         expect(out, "偏移", "非法源码诊断")
         expect(out, "[run] /home/user/repeat.elf 退出码=42", "退出码")
-        print("  [PASS] 重复编译/运行、真实退出码 42、非法源码诊断")
+        expect(out, "CONTROL_OK", "变量/分支/循环程序输出")
+        expect(out, "[run] /home/user/control.elf 退出码=42", "控制流退出码")
+        print("  [PASS] 重复编译/运行、变量/if/while、真实退出码 42、非法源码诊断")
     except Exception as error:
         failures += 1
         print(f"  [FAIL] Shell 工具链：{error}")

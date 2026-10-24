@@ -70,7 +70,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | PCI/Bus Master DMA、Ethernet/ARP/IPv4、DHCP/ICMP/UDP、socket fd |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
-| 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 无宿主依赖的常量表达式/字符串编译，生成静态 x86_64 ET_EXEC，诊断偏移可报告 |
+| 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、四则/比较、if/else/while、字符串输出；直接生成静态 x86_64 ET_EXEC |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
 | FYXGit v1 | `kernel/git/fyxgit.c` | 原子仓库数据库、暂存/提交父链、状态、文本 diff、restore；不是 Git SHA-1/pack 兼容实现 |
 | FYXFS | `kernel/fs/fyxfs.c` | 4KiB CoW 块、双超级块、CRC32、目录/extents、快照 |
@@ -100,8 +100,9 @@ make test-storage   # 只重跑存储集成测试
 
 图形首版仅支持 BGA 800×600 软件光栅化；没有 GPU/Vulkan、多显示器、鼠标、
 用户态窗口协议、完整字体/输入法和真实 RTC。桌面是内核态首版合成器，不能据此
-宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前只接受 `int main` 中的
-`puts/print("...")` 与整数常量表达式 `return`，不是完整 C/GCC/Clang；Studio
+宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前只支持单个 `int main`、最多 16 个
+局部整数变量、四则/比较、`if/else`、`while` 和 `puts/print`；没有函数调用、
+指针、数组、结构体、预处理器或 libc，不是完整 C/GCC/Clang。Studio
 也是单文件、末尾插入式首版，不是 VS Code 级 IDE。FYXGit 仅是上述受限 v1，
 不是完整 Git 兼容；多语言编译器、TCP/IPv6、A/B 槽与独立救援环境仍未完成。
 

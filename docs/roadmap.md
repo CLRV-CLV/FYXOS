@@ -124,8 +124,10 @@ quick、PNG 像素和 guest/host 帧校验均已接入验收，详见
 Rust / Go / Zig / Python / Node 等通过统一接口接入 → 移植 git。
 
 **当前实现（已实跑通过）**：`fyxcc` 在内核中把小型 C 子集直接编译为静态
-x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；重复编译、真实退出码、
-非法输入诊断均有自动化验收。它目前不是完整 C，也尚未提供多语言前端。
+x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；支持单个 `int main`、
+最多 16 个栈上局部整数变量、赋值、四则/比较、`if/else`、`while`、嵌套块和
+`puts/print`，重复编译、真/假分支、循环、真实退出码和非法输入诊断均有自动化
+验收。它目前不是完整 C，也尚未提供多语言前端。
 另有 FYXGit v1：单个原子持久化 `.fyxgit` 数据库、暂存区、提交父链、文本 diff
 和 restore 已跨重启验收；它不是 Git 的 SHA-1/index/pack 兼容实现，完整 git
 移植、分支/合并/克隆和远程协议仍未完成。
