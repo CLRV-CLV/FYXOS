@@ -26,7 +26,8 @@ PCI 配置空间
 - `kernel/net/socket.c`：最多 16 个 UDP/TCP socket，每 socket 8 个接收队列
   项；支持显式/隐式绑定、临时端口、connect 过滤、引用计数与 fork 继承。
   UDP 使用数据报队列；TCP 支持同一接收项的部分读取和流式 EOF。
-- `kernel/net/dns.c`：通过真实内核 UDP socket 查询 A 记录，不走固定旁路端口。
+- `kernel/net/dns.c`：通过真实内核 UDP socket 查询 A 记录；遇 TC 后复用内核
+  TCP socket 回退，不走固定旁路端口或另一套握手实现。
 - `kernel/sys/pipe.c`：文件、管道、socket 统一经过 fd 的
   `read/write/close` 分派；socket 也可使用 `sendto/recvfrom`。
 
@@ -80,9 +81,11 @@ TCP options、MSS 协商或完整 FIN/TIME_WAIT 状态机。
 - 只接受 `IN/A` 且 `rdlength=4` 的地址；其他记录会安全跳过。
 
 错误 ID/问题返回内部 `EAGAIN` 并继续等待；NXDOMAIN 和 NOERROR 无 A 记录为
-`-FYX_ENOENT`（-8），超时为 -18，畸形/截断/环路报文为 `-FYX_EPROTO`（-21）。
-无效本地主机名为 -1。当前不缓存、不重传、不递归追 CNAME，也不在 UDP 截断
-后用 TCP 重试。
+`-FYX_ENOENT`（-8），超时为 -18，畸形/环路报文为 `-FYX_EPROTO`（-21）。
+无效本地主机名为 -1。只有合法 UDP 响应中的 TC 会触发 TCP 回退：连接同一
+DNS/53，发送两字节网络序长度前缀和原查询，再按长度读取完整响应；读取允许
+多次部分 TCP recv，提前 EOF、超时和长度超过 1472 字节都会报错。其他畸形
+UDP 报文不会被误判为截断并重试。当前不缓存、不重传、不递归追 CNAME。
 
 ## 5. Shell 与可见状态
 
@@ -116,6 +119,8 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
   还必须得到 FIN-EOF，最后 close 发出 FIN；
 - `example.test` 先返回错误 ID/不同地址，再返回正确 ID、压缩名的
   `93.184.216.34`，只有忽略第一帧才会通过；
+- `tcpfallback.test` 的 UDP 应答设置 TC，只有继续完成 TCP/53 握手并发送正确
+  两字节长度前缀，才会经 TCP 得到 `93.184.216.35`；
 - `missing.test`、`empty.test`、`broken.test`、`unknown.test` 分别覆盖
   NXDOMAIN、无 A、压缩指针自环与无响应超时；
 - `gateway.test` 解析为 `10.0.2.2`，随后完成真实 ICMP echo。
@@ -124,7 +129,7 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
 
 ```bash
 make image
-make test-network   # DNS 3 项；基础自检同时要求 ring3 UDP/TCP 全部通过
+make test-network   # DNS 4 项；基础自检同时要求 ring3 UDP/TCP 全部通过
 make test           # full/quick + DNS + 工具链/Git/CLI/图形/存储全部回归
 ```
 
@@ -138,7 +143,8 @@ DNS 专项日志写入 `build/network-test/dns.log`。full-boot 与 quick 均直
   无 E1000/VirtIO-net。
 - TCP 无 listen/server、重传、拥塞控制、乱序重组、options 和完整关闭状态机。
 - 无 IPv6、TLS、IP 分片重组和 UDP checksum 生成/校验。
-- DNS 无缓存、重传、AAAA、CNAME 递归、TCP 回退、搜索域和 POSIX getaddrinfo。
+- DNS 无缓存、重传、AAAA、CNAME 递归、搜索域和 POSIX getaddrinfo；TCP 回退
+  当前每次查询只接收一个、最大 1472 字节的 DNS 报文。
 - ARP 目前只缓存一个下一跳；DHCP 首版不做租约续期与多接口配置。
 - RTL8139 首版轮询接收，无 NIC IRQ；大 RX 环绕回与完整错误恢复仍需加强。
 - socket 队列有固定容量，用户指针完整边界检查仍属于后续安全加固。

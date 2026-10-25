@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""DNS/UDP/ICMP 端到端验收：真实 guest 协议栈与异常响应路径。"""
+"""DNS/UDP/TCP/ICMP 端到端验收：真实 guest 协议栈与异常响应路径。"""
 from __future__ import annotations
 
 import argparse
@@ -17,10 +17,18 @@ def expect(text: str, needle: str, label: str):
         raise RuntimeError(f"{label} 缺少 {needle!r}\n{text[-5000:]}")
 
 
+def expect_resolve_error(text: str, name: str, code: int, label: str):
+    # 串口台架偶尔会损坏一个 UTF-8 字符；主机名与错误码仍须在同一输出行。
+    pattern = rf"resolve: {re.escape(name)}[^\r\n]{{0,48}}错误 {code}"
+    if not re.search(pattern, text):
+        raise RuntimeError(f"{label} 缺少 {name} / {code}\n{text[-5000:]}")
+
+
 def run_dns_case(kernel: str, output_dir: Path, max_seconds: int) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
     keys = (
-        "ifconfig;resolve example.test;resolve EXAMPLE.TEST.;resolve missing.test;"
+        "ifconfig;resolve example.test;resolve EXAMPLE.TEST.;"
+        "resolve tcpfallback.test;resolve missing.test;"
         "resolve empty.test;resolve broken.test;resolve bad..name;"
         "resolve unknown.test 20;ping gateway.test;shutdown"
     )
@@ -69,11 +77,19 @@ def main():
         print(f"  [FAIL] DNS 正向解析：{error}")
 
     try:
-        expect(out, "resolve: missing.test 失败（错误 -8）", "NXDOMAIN")
-        expect(out, "resolve: empty.test 失败（错误 -8）", "无 A 记录")
-        expect(out, "resolve: broken.test 失败（错误 -21）", "压缩指针环路")
-        expect(out, "resolve: bad..name 失败（错误 -1）", "非法主机名")
-        expect(out, "resolve: unknown.test 失败（错误 -18）", "查询超时")
+        expect(out, "[dns] tcpfallback.test -> 93.184.216.35",
+               "UDP TC 后的 DNS-over-TCP 回退")
+        print("  [PASS] DNS UDP 截断 → TCP 握手 → 长度前缀查询与 A 记录")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] DNS TCP 回退：{error}")
+
+    try:
+        expect_resolve_error(out, "missing.test", -8, "NXDOMAIN")
+        expect_resolve_error(out, "empty.test", -8, "无 A 记录")
+        expect_resolve_error(out, "broken.test", -21, "压缩指针环路")
+        expect_resolve_error(out, "bad..name", -1, "非法主机名")
+        expect_resolve_error(out, "unknown.test", -18, "查询超时")
         print("  [PASS] NXDOMAIN、空答案、指针环路、非法名与超时诊断")
     except Exception as error:
         failures += 1

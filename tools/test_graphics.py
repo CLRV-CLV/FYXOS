@@ -98,8 +98,10 @@ def main():
         out, _ = run_case(
             "no-bga", args.kernel, output_dir, ["--no-gfx"],
             "desktop;shutdown", args.max_seconds)
-        if "desktop: graphics unavailable" not in out:
-            raise RuntimeError("没有返回清晰的图形设备错误")
+        if not re.search(r"desktop: graphics [^\r\n]*\(error -3\)", out):
+            raise RuntimeError("没有返回图形设备错误码 -3")
+        if "正常关机" not in out:
+            raise RuntimeError("无 BGA 救援 Shell 未正常关机")
         if "[gfx] BGA LFB" in out or "[fyxemu] 失败" in out:
             raise RuntimeError("无 BGA 路径出现意外初始化或仿真错误")
         print("  [PASS] 无 BGA 时保留救援 Shell 并正常关机")

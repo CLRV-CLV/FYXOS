@@ -156,6 +156,11 @@ int socket_udp_open(struct fyx_socket **out)
     return socket_open(NET_SOCK_DGRAM, out);
 }
 
+int socket_tcp_open(struct fyx_socket **out)
+{
+    return socket_open(NET_SOCK_STREAM, out);
+}
+
 long sys_socket(u32 domain, u32 type, u32 protocol)
 {
     if (!net_ready())
@@ -304,6 +309,13 @@ fail:
     return rc;
 }
 
+int socket_tcp_connect(struct fyx_socket *socket, u32 ip, u16 port)
+{
+    if (!socket || socket->kind != NET_SOCK_STREAM)
+        return -FYX_EINVAL;
+    return tcp_connect_socket(socket, ip, port);
+}
+
 long sys_connect(int fd, const struct fyx_sockaddr_in *address, size_t address_len)
 {
     struct fyx_socket *socket = fd_socket(fd);
@@ -364,6 +376,13 @@ static long tcp_send_socket(struct fyx_socket *socket,
         return rc;
     socket->tcp_sequence += (u32)len;
     return (long)len;
+}
+
+long socket_tcp_send(struct fyx_socket *socket, const void *buffer, size_t len)
+{
+    if (!socket || socket->kind != NET_SOCK_STREAM)
+        return -FYX_EBADF;
+    return tcp_send_socket(socket, buffer, len);
 }
 
 long sys_sendto(int fd, const void *buffer, size_t len, u32 flags,
@@ -591,6 +610,14 @@ static long tcp_recv_socket(struct fyx_socket *socket, void *buffer, size_t len,
         net_poll();
         thread_sleep_ms(1);
     }
+}
+
+long socket_tcp_recv(struct fyx_socket *socket, void *buffer, size_t len,
+                     u32 flags)
+{
+    if (!socket || socket->kind != NET_SOCK_STREAM)
+        return -FYX_EBADF;
+    return tcp_recv_socket(socket, buffer, len, flags, NULL, NULL);
 }
 
 long sys_recvfrom(int fd, void *buffer, size_t len, u32 flags,

@@ -128,7 +128,9 @@ def main():
     ap.add_argument("--image", required=True)
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--work", default=None)
-    ap.add_argument("--max-seconds", type=int, default=45)
+    # 四个断电实例并行，且 init 已包含完整 UDP/TCP 验收；保留充足墙钟预算，
+    # 不改变任何 ATA 写点、重启内容或 fsck 断言。
+    ap.add_argument("--max-seconds", type=int, default=90)
     args = ap.parse_args()
     work = args.work or str(Path(args.image).parent / "storage-test")
     try:

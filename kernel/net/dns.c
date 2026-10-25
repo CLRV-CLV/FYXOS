@@ -1,4 +1,4 @@
-/* FYXOS — 通过真实 UDP socket 的 DNS/IPv4 A 记录客户端。 */
+/* FYXOS — 通过真实 UDP/TCP socket 的 DNS/IPv4 A 记录客户端。 */
 #include <fyxos/net.h>
 #include <fyxos/socket.h>
 #include <fyxos/lib.h>
@@ -170,8 +170,8 @@ static int dns_parse_reply(const u8 *packet, size_t length, u16 expected_id,
         return -FYX_ENOENT;
     if (rcode)
         return -FYX_EIO;
-    if (flags & 0x0200u)                 /* UDP 截断：v1 不伪装完整结果 */
-        return -FYX_EPROTO;
+    if (flags & 0x0200u)                 /* 由调用者执行 DNS-over-TCP 回退 */
+        return -FYX_ERANGE;
 
     u16 answers = read_be16(packet + 6);
     for (u16 i = 0; i < answers; i++) {
@@ -193,6 +193,79 @@ static int dns_parse_reply(const u8 *packet, size_t length, u16 expected_id,
         offset += rdlength;
     }
     return -FYX_ENOENT;                  /* NOERROR 但没有可用 A 记录 */
+}
+
+static int dns_tcp_read_exact(struct fyx_socket *socket, void *buffer,
+                              size_t length, u64 deadline)
+{
+    size_t done = 0;
+    while (done < length) {
+        if (pit_ticks() >= deadline)
+            return -FYX_ETIMEDOUT;
+        net_poll();
+        long received = socket_tcp_recv(socket, (u8 *)buffer + done,
+                                        length - done, NET_MSG_DONTWAIT);
+        if (received > 0) {
+            done += (size_t)received;
+            continue;
+        }
+        if (received == 0)
+            return -FYX_EPIPE;           /* 完整 DNS 报文前对端关闭 */
+        if (received != -FYX_EAGAIN)
+            return (int)received;
+        thread_sleep_ms(1);
+    }
+    return FYX_OK;
+}
+
+static int dns_resolve_tcp(const u8 *query, size_t query_len, u16 id,
+                           u32 server, u32 *address, u32 timeout_ms)
+{
+    struct fyx_socket *socket = NULL;
+    int rc = socket_tcp_open(&socket);
+    if (rc != 0)
+        return rc;
+    rc = socket_tcp_connect(socket, server, DNS_PORT);
+    if (rc != 0) {
+        socket_release(socket);
+        return rc;
+    }
+
+    u8 framed[2 + DNS_HEADER_SIZE + DNS_MAX_NAME + 4];
+    if (query_len > sizeof(framed) - 2) {
+        socket_release(socket);
+        return -FYX_ERANGE;
+    }
+    write_be16(framed, (u16)query_len);
+    memcpy(framed + 2, query, query_len);
+    long sent = socket_tcp_send(socket, framed, query_len + 2);
+    if (sent != (long)(query_len + 2)) {
+        socket_release(socket);
+        return sent < 0 ? (int)sent : -FYX_EIO;
+    }
+
+    u64 deadline = pit_ticks() + dns_ms_to_ticks(timeout_ms);
+    u8 prefix[2];
+    rc = dns_tcp_read_exact(socket, prefix, sizeof(prefix), deadline);
+    if (rc == 0) {
+        size_t reply_len = read_be16(prefix);
+        if (!reply_len)
+            rc = -FYX_EPROTO;
+        else if (reply_len > NET_MAX_UDP_PAYLOAD)
+            rc = -FYX_ERANGE;
+        else {
+            u8 reply[NET_MAX_UDP_PAYLOAD];
+            rc = dns_tcp_read_exact(socket, reply, reply_len, deadline);
+            if (rc == 0) {
+                rc = dns_parse_reply(reply, reply_len, id,
+                                     query, query_len, address);
+                if (rc == -FYX_EAGAIN)
+                    rc = -FYX_EPROTO;
+            }
+        }
+    }
+    socket_release(socket);
+    return rc;
 }
 
 int net_dns_resolve(const char *name, u32 *address, u32 timeout_ms)
@@ -252,5 +325,8 @@ int net_dns_resolve(const char *name, u32 *address, u32 timeout_ms)
     if (rc == -FYX_EAGAIN)
         rc = -FYX_ETIMEDOUT;
     socket_release(socket);
+    if (rc == -FYX_ERANGE)
+        return dns_resolve_tcp(query, query_len, id, info.dns_server,
+                               address, timeout_ms);
     return rc;
 }

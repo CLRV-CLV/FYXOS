@@ -61,6 +61,7 @@ class IPv4Peer:
         self.udp_echoes = 0
         self.dns_queries = 0
         self.dns_wrong_id_replies = 0
+        self.dns_tcp_queries = 0
         self.tcp_synacks = 0
         self.tcp_echoes = 0
         self.tcp_fins = 0
@@ -127,12 +128,14 @@ class IPv4Peer:
 
     @staticmethod
     def _dns_response(query: bytes, addresses: list[bytes], *, rcode: int = 0,
-                      ident: int | None = None, broken: bool = False) -> bytes:
+                      ident: int | None = None, broken: bool = False,
+                      truncated: bool = False) -> bytes:
         question = query[12:]
-        answer_count = 0 if rcode else (1 if broken else len(addresses))
+        answer_count = 0 if rcode or truncated else (1 if broken else len(addresses))
         if ident is None:
             ident = struct.unpack("!H", query[:2])[0]
-        header = struct.pack("!HHHHHH", ident, 0x8180 | rcode, 1,
+        flags = 0x8180 | rcode | (0x0200 if truncated else 0)
+        header = struct.pack("!HHHHHH", ident, flags, 1,
                              answer_count, 0, 0)
         answers = bytearray()
         if broken:
@@ -159,6 +162,8 @@ class IPv4Peer:
                     self._dns_response(query, [bytes((93, 184, 216, 34))])]
         if name == "gateway.test":
             return [self._dns_response(query, [self.server_ip])]
+        if name == "tcpfallback.test":
+            return [self._dns_response(query, [], truncated=True)]
         if name == "missing.test":
             return [self._dns_response(query, [], rcode=3)]
         if name == "empty.test":
@@ -200,23 +205,27 @@ class IPv4Peer:
         if destination_port == 8 and (flags & 0x02):
             return [self._tcp_segment(self.server_ip, source_ip, 8, source_port,
                                       0, (sequence + 1) & 0xFFFFFFFF, 0x14)]
-        if destination_port != 7:
+        if destination_port not in (7, 53):
             return []
-        key = (source_ip, source_port)
+        key = (source_ip, source_port, destination_port)
         if flags & 0x02:                   # SYN
             if flags & 0x10:               # 本对端只接受主动打开的第一个 SYN
                 self.tcp_dropped += 1
                 return []
             connection = {"client_next": (sequence + 1) & 0xFFFFFFFF,
-                          "server_next": 0x1001}
+                          "server_next": 0x1001,
+                          "service": destination_port}
             self.tcp_connections[key] = connection
             self.tcp_synacks += 1
-            return [self._tcp_segment(self.server_ip, source_ip, 7, source_port,
-                                      0x2000, connection["client_next"], 0x12,
-                                      corrupt_checksum=True),
-                    self._tcp_segment(self.server_ip, source_ip, 7, source_port,
-                                      0x1000, connection["client_next"],
-                                      0x12)]  # 坏 checksum 必须先被丢弃，再接收 SYN|ACK
+            good_synack = self._tcp_segment(
+                self.server_ip, source_ip, destination_port, source_port,
+                0x1000, connection["client_next"], 0x12)
+            if destination_port == 7:
+                bad_synack = self._tcp_segment(
+                    self.server_ip, source_ip, 7, source_port, 0x2000,
+                    connection["client_next"], 0x12, corrupt_checksum=True)
+                return [bad_synack, good_synack]
+            return [good_synack]
         connection = self.tcp_connections.get(key)
         if connection is None:
             return []
@@ -232,13 +241,31 @@ class IPv4Peer:
                 self.tcp_dropped += 1
                 return []
             connection["client_next"] = (sequence + len(payload)) & 0xFFFFFFFF
+            response_payload = payload
+            response_flags = 0x18          # PSH|ACK
+            if connection["service"] == 53:
+                if len(payload) < 2:
+                    self.tcp_dropped += 1
+                    return []
+                query_length = struct.unpack("!H", payload[:2])[0]
+                query = payload[2:]
+                if query_length != len(query) or \
+                        self._dns_query_name(query) != "tcpfallback.test":
+                    self.tcp_dropped += 1
+                    return []
+                response = self._dns_response(query, [bytes((93, 184, 216, 35))])
+                response_payload = struct.pack("!H", len(response)) + response
+                self.dns_tcp_queries += 1
+            else:
+                response_flags |= 0x01     # echo 同时被动关闭
+                self.tcp_echoes += 1
             responses.append(self._tcp_segment(
-                self.server_ip, source_ip, 7, source_port,
-                connection["server_next"], connection["client_next"], 0x19,
-                payload))                   # PSH|ACK|FIN：回显并被动关闭
-            connection["server_next"] = (connection["server_next"] +
-                                         len(payload) + 1) & 0xFFFFFFFF
-            self.tcp_echoes += 1
+                self.server_ip, source_ip, destination_port, source_port,
+                connection["server_next"], connection["client_next"],
+                response_flags, response_payload))
+            connection["server_next"] = (
+                connection["server_next"] + len(response_payload) +
+                (1 if response_flags & 0x01 else 0)) & 0xFFFFFFFF
         if flags & 0x01:                   # FIN
             fin_sequence = sequence + len(payload)
             if fin_sequence != connection["client_next"]:
@@ -246,7 +273,7 @@ class IPv4Peer:
                 return responses
             connection["client_next"] = (fin_sequence + 1) & 0xFFFFFFFF
             responses.append(self._tcp_segment(
-                self.server_ip, source_ip, 7, source_port,
+                self.server_ip, source_ip, destination_port, source_port,
                 connection["server_next"], connection["client_next"], 0x11))
             connection["server_next"] = (connection["server_next"] + 1) & 0xFFFFFFFF
             self.tcp_fins += 1

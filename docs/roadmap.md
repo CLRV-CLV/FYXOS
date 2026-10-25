@@ -97,10 +97,11 @@ quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回
 复用同一套内核 UDP socket/队列，从 DHCP option 6 取得服务器，`resolve` 与
 `ping <hostname>` 已验证 A 记录、错误事务 ID、压缩名、NXDOMAIN、畸形报文和
 超时。TCP 主动客户端复用原有 5 个 socket syscall，ring3 已实测 SYN/SYN-ACK/
-ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 EOF。
+ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 EOF；DNS
+在 UDP TC 后也会通过同一 TCP 客户端发送带两字节长度前缀的查询并解析响应。
 当前共 38 个 syscall、65 条 Shell 命令。listen/server、重传、拥塞控制、乱序
-重组、IPv6、TLS、DNS 缓存/重传/TCP 回退与 E1000/VirtIO-net 仍未实现，详见
-[`docs/design/network.md`](design/network.md)。
+重组、IPv6、TLS、DNS 缓存/重传/AAAA/CNAME 递归与 E1000/VirtIO-net 仍未实现，
+详见 [`docs/design/network.md`](design/network.md)。
 
 ### 阶段 J — 图形栈与桌面
 
