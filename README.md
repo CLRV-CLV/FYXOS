@@ -37,6 +37,8 @@ python3 -m venv .venv && .venv/bin/pip install unicorn
 make image          # build/fyxos.img；预装 /bin/gcc-c11-demo
 make sdk            # build/fyxos-sdk/ 与 build/fyxos-sdk.tar.gz
 ./build/fyxos-sdk/bin/fyx-gcc sdk/examples/c11-demo.c -o build/my-demo.elf
+# 可选：把自己的 GCC ELF 预装进新镜像（guest 路径仍为 /bin/gcc-c11-demo）
+make app-image APP=build/my-demo.elf
 
 # 3. 全链路实跑（从 BIOS 第一条指令开始）
 .venv/bin/python tools/fyxemu.py --image build/fyxos.img \

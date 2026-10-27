@@ -6,6 +6,7 @@
 #    make kernel     -> build/fyxos.elf（ELF64 内核）
 #    make boot       -> build/stage1.bin + build/stage2.bin
 #    make sdk        -> build/fyxos-sdk/ + build/fyxos-sdk.tar.gz + GCC 示例 ELF
+#    make app-image APP=... -> 把自定义 GCC ELF 预装进新镜像
 #    make emu        -> 在 Unicorn 台架上真实启动（BIOS 实模式全链路）
 #    make emu-quick  -> 跳过引导扇区，直接把内核载入 64 位引擎启动
 #    make test       -> 跑全部自动化测试
@@ -91,7 +92,7 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user sdk image emu emu-quick test test-sdk test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
+.PHONY: all kernel boot user sdk image app-image emu emu-quick test test-sdk test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
@@ -143,6 +144,14 @@ $(SDK_STAMP): $(SDK_INPUTS)
 
 $(SDK_ARCHIVE) $(SDK_DEMO_ELF) $(SDK_HELLO_ELF): $(SDK_STAMP)
 	@test -f $@
+
+# 把 SDK 生成的自定义程序装进新镜像；guest 中仍运行 /bin/gcc-c11-demo。
+app-image: $(SDK_STAMP)
+	@if [ -z "$(APP)" ]; then echo "用法: make app-image APP=build/my-app.elf"; exit 2; fi
+	@test -f "$(APP)" || { echo "应用不存在: $(APP)"; exit 2; }
+	cp "$(APP)" $(SDK_DEMO_ELF)
+	rm -f $(BUILD)/kernel/sys/init_image.o
+	$(MAKE) image
 
 # init_image.S 用 .incbin 内嵌用户 ELF，必须显式声明这个依赖；
 # 否则用户程序更新后只会重链内核，旧 blob 仍留在 init_image.o 里。

@@ -21,6 +21,18 @@ fyx-gcc -c app.c -o app.o
 fyx-gcc app.o -o app.elf
 ```
 
+在 FYXOS 源码树根目录，可把生成的程序预装进一张新镜像（该步骤需要内核源码，
+不是离线修改已有 FYXFS 镜像）：
+
+```sh
+make app-image APP=build/my-demo.elf
+# 启动这张 build/fyxos.img 后，在 guest 中运行：
+run /bin/gcc-c11-demo
+```
+
+这里会用自定义 ELF 替换生成镜像中的示例；`make clean && make image` 可恢复默认
+C11 示例。当前尚未提供 guest 内 GCC 或独立的镜像文件注入器。
+
 输出为固定基址 `0x400000`、非 PIE、静态 x86_64 ELF，入口采用 SysV AMD64
 `main(argc, argv, envp)`；main 返回值就是进程退出码。链接器会按页分离
 TEXT/RODATA/DATA/BSS，保持 FYXOS 的 W^X 装载约束。
