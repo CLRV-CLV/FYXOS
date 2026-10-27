@@ -70,7 +70,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
-| 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、复合赋值、++/--、while/for、break/continue；直接生成静态 x86_64 ET_EXEC |
+| 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、算术/移位/位运算、复合赋值、while/for；直接生成静态 x86_64 ET_EXEC |
 | FyxJS 子集工具链 | `kernel/toolchain/fyxjs.c` | `function main`、let、严格比较、console.log/process.exit；共用原生后端生成 ELF |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
 | FYXGit v1 | `kernel/git/fyxgit.c` | 原子仓库数据库、暂存/提交父链、状态、文本 diff、restore；不是 Git SHA-1/pack 兼容实现 |
@@ -87,7 +87,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 4 + Git/CLI 4 + 图形 3 + 存储 5
+make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 5 + Git/CLI 4 + 图形 3 + 存储 5
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS、循环/运算符、诊断与 Studio/PNG 闭环
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -103,9 +103,9 @@ make test-storage   # 只重跑存储集成测试
 图形首版仅支持 BGA 800×600 软件光栅化；没有 GPU/Vulkan、多显示器、鼠标、
 用户态窗口协议、完整字体/输入法和真实 RTC。桌面是内核态首版合成器，不能据此
 宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前只支持单个 `int main`、最多 16 个
-局部整数变量、四则/比较、复合赋值、局部变量 `++/--`、`if/else`、`while/for`、
-`break/continue` 和 `puts/print`；没有函数调用、指针、数组、结构体、预处理器
-或 libc，不是完整 C/GCC/Clang。FyxJS 同样仅覆盖
+局部整数变量、算术/比较/移位/位运算、复合赋值、局部变量 `++/--`、`if/else`、
+`while/for`、`break/continue` 和 `puts/print`；没有函数调用、逻辑 `&&/||/!`、
+指针、数组、结构体、预处理器或 libc，不是完整 C/GCC/Clang。FyxJS 同样仅覆盖
 静态整数子集，没有动态类型、对象、闭包、数组、事件循环或 JS 库；完整多语言
 工具链仍未完成。Studio 也是单文件、末尾插入式首版，不是 VS Code 级 IDE。
 FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B 槽与独立救援

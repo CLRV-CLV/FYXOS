@@ -150,6 +150,31 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/m.c int main(){int x=17\\;if(x%5!=2)return 1\\;"
+            "if(-17%5!=-2)return 2\\;x%=5\\;if(x!=2)return 3\\;return 42\\;};"
+            "fyxcc /home/user/m.c /home/user/m.elf;run /home/user/m.elf;"
+            "write /home/user/s.c int main(){if((1+2<<2)!=12)return 1\\;"
+            "if((16>>2+1)!=2)return 2\\;if((-8>>2)!=-2)return 3\\;"
+            "if(~0!=-1)return 4\\;return 42\\;};"
+            "fyxcc /home/user/s.c /home/user/s.elf;run /home/user/s.elf;"
+            "write /home/user/b.c int main(){if((5&3)!=1)return 1\\;"
+            "if((5|2)!=7)return 2\\;if((5^3)!=6)return 3\\;"
+            "if((1|2&4)!=1)return 4\\;if((1^3&1)!=0)return 5\\;return 42\\;};"
+            "fyxcc /home/user/b.c /home/user/b.elf;run /home/user/b.elf;shutdown"
+        )
+        out, _ = run_case("integer-operators", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        for name, label in (("m", "取余/%="), ("s", "移位/~"),
+                            ("b", "&/|/^ 与优先级")):
+            expect(out, f"[run] /home/user/{name}.elf 退出码=42", label)
+        print("  [PASS] C %/%=、移位、~、&/|/^ 与 C 表达式优先级")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 整数/位运算：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"

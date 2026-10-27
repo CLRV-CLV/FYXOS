@@ -1,7 +1,7 @@
 /* FYXOS — 小型 C 子集到 x86_64 静态 ELF 的原生编译器
  *
- * 支持：int main、局部整数变量、简单/复合赋值、四则/比较、++/--、
- * puts/print 字符串、return、if/else、while/for、break/continue 与嵌套块。
+ * 支持：int main、局部整数变量、简单/复合赋值、算术/比较/移位/位运算、
+ * ++/--、puts/print 字符串、return、if/else、while/for、break/continue 与嵌套块。
  * 生成代码直接使用
  * FYXOS SYSCALL ABI，
  * 不依赖宿主 libc、GCC 或外部链接器；变量在用户栈上，保持 ELF 段 RX。
@@ -164,7 +164,7 @@ static char cc_assignment_operator(struct cc_parser *p)
         p->pos++;
         return op;
     }
-    if ((op == '+' || op == '-' || op == '*' || op == '/') &&
+    if ((op == '+' || op == '-' || op == '*' || op == '/' || op == '%') &&
         p->pos + 1 < p->length && p->source[p->pos + 1] == '=') {
         p->pos += 2;
         return op;
@@ -489,6 +489,14 @@ static bool cc_parse_primary(struct cc_parser *p)
         cc_emit_store_var(p, var);
         return !p->error;
     }
+    if (cc_consume(p, '~')) {
+        if (!cc_parse_primary(p))
+            return false;
+        cc_emit8(p, 0x48);                     /* not rax */
+        cc_emit8(p, 0xF7);
+        cc_emit8(p, 0xD0);
+        return !p->error;
+    }
     if (cc_consume(p, '-')) {
         if (!cc_parse_primary(p))
             return false;
@@ -549,7 +557,8 @@ static bool cc_parse_mul(struct cc_parser *p)
     for (;;) {
         cc_skip(p);
         if (p->pos >= p->length ||
-            (p->source[p->pos] != '*' && p->source[p->pos] != '/'))
+            (p->source[p->pos] != '*' && p->source[p->pos] != '/' &&
+             p->source[p->pos] != '%'))
             return true;
         char op = p->source[p->pos++];
         cc_emit8(p, 0x50);                     /* push left */
@@ -567,6 +576,11 @@ static bool cc_parse_mul(struct cc_parser *p)
             cc_emit8(p, 0x48);
             cc_emit8(p, 0xF7);
             cc_emit8(p, 0xF9);
+            if (op == '%') {                   /* idiv 的余数在 rdx */
+                cc_emit8(p, 0x48);
+                cc_emit8(p, 0x89);
+                cc_emit8(p, 0xD0);
+            }
         }
     }
 }
@@ -591,16 +605,16 @@ static bool cc_parse_add(struct cc_parser *p)
     }
 }
 
-static u8 cc_comparison(struct cc_parser *p)
+static u8 cc_relational_operator(struct cc_parser *p)
 {
     cc_skip(p);
     if (p->pos + 1 < p->length) {
         char a = p->source[p->pos], b = p->source[p->pos + 1];
         u8 op = 0;
-        if (a == '=' && b == '=') op = 0x94;   /* sete */
-        else if (a == '!' && b == '=') op = 0x95; /* setne */
-        else if (a == '<' && b == '=') op = 0x9E; /* setle */
+        if (a == '<' && b == '=') op = 0x9E;   /* setle */
         else if (a == '>' && b == '=') op = 0x9D; /* setge */
+        else if ((a == '<' && b == '<') || (a == '>' && b == '>'))
+            return 0;
         if (op) {
             p->pos += 2;
             return op;
@@ -608,36 +622,156 @@ static u8 cc_comparison(struct cc_parser *p)
     }
     if (p->pos < p->length && p->source[p->pos] == '<') {
         p->pos++;
-        return 0x9C;                            /* setl */
+        return 0x9C;
     }
     if (p->pos < p->length && p->source[p->pos] == '>') {
         p->pos++;
-        return 0x9F;                            /* setg */
+        return 0x9F;
     }
     return 0;
 }
 
-static bool cc_parse_expression(struct cc_parser *p)
+static u8 cc_equality_operator(struct cc_parser *p)
+{
+    cc_skip(p);
+    if (p->pos + 1 >= p->length)
+        return 0;
+    char a = p->source[p->pos], b = p->source[p->pos + 1];
+    if (a == '=' && b == '=') {
+        p->pos += 2;
+        return 0x94;
+    }
+    if (a == '!' && b == '=') {
+        p->pos += 2;
+        return 0x95;
+    }
+    return 0;
+}
+
+static void cc_emit_comparison(struct cc_parser *p, u8 comparison)
+{
+    cc_emit_right_operand(p);
+    cc_emit8(p, 0x48);                         /* cmp rax, rcx */
+    cc_emit8(p, 0x39);
+    cc_emit8(p, 0xC8);
+    cc_emit8(p, 0xB8);                         /* mov eax, 0（不改 flags） */
+    cc_emit32(p, 0);
+    cc_emit8(p, 0x0F);
+    cc_emit8(p, comparison);
+    cc_emit8(p, 0xC0);
+}
+
+static bool cc_parse_shift(struct cc_parser *p)
 {
     if (!cc_parse_add(p))
         return false;
     for (;;) {
-        u8 comparison = cc_comparison(p);
-        if (!comparison)
+        bool left = cc_consume_operator(p, "<<");
+        bool right = !left && cc_consume_operator(p, ">>");
+        if (!left && !right)
             return !p->error;
         cc_emit8(p, 0x50);
         if (!cc_parse_add(p))
             return false;
-        cc_emit_right_operand(p);
-        cc_emit8(p, 0x48);                     /* cmp rax, rcx */
-        cc_emit8(p, 0x39);
-        cc_emit8(p, 0xC8);
-        cc_emit8(p, 0xB8);                     /* mov eax, 0（不改 flags） */
-        cc_emit32(p, 0);
-        cc_emit8(p, 0x0F);
-        cc_emit8(p, comparison);
-        cc_emit8(p, 0xC0);
+        cc_emit_right_operand(p);              /* 移位计数自动使用 CL */
+        cc_emit8(p, 0x48);
+        cc_emit8(p, 0xD3);
+        cc_emit8(p, left ? 0xE0 : 0xF8);       /* shl/sar rax, cl */
     }
+}
+
+static bool cc_parse_relational(struct cc_parser *p)
+{
+    if (!cc_parse_shift(p))
+        return false;
+    for (;;) {
+        u8 comparison = cc_relational_operator(p);
+        if (!comparison)
+            return !p->error;
+        cc_emit8(p, 0x50);
+        if (!cc_parse_shift(p))
+            return false;
+        cc_emit_comparison(p, comparison);
+    }
+}
+
+static bool cc_parse_equality(struct cc_parser *p)
+{
+    if (!cc_parse_relational(p))
+        return false;
+    for (;;) {
+        u8 comparison = cc_equality_operator(p);
+        if (!comparison)
+            return !p->error;
+        cc_emit8(p, 0x50);
+        if (!cc_parse_relational(p))
+            return false;
+        cc_emit_comparison(p, comparison);
+    }
+}
+
+static bool cc_parse_bitand(struct cc_parser *p)
+{
+    if (!cc_parse_equality(p))
+        return false;
+    for (;;) {
+        cc_skip(p);
+        if (p->pos >= p->length || p->source[p->pos] != '&' ||
+            (p->pos + 1 < p->length && p->source[p->pos + 1] == '&'))
+            return !p->error;
+        p->pos++;
+        cc_emit8(p, 0x50);
+        if (!cc_parse_equality(p))
+            return false;
+        cc_emit_right_operand(p);
+        cc_emit8(p, 0x48);                     /* and rax, rcx */
+        cc_emit8(p, 0x21);
+        cc_emit8(p, 0xC8);
+    }
+}
+
+static bool cc_parse_bitxor(struct cc_parser *p)
+{
+    if (!cc_parse_bitand(p))
+        return false;
+    for (;;) {
+        cc_skip(p);
+        if (p->pos >= p->length || p->source[p->pos] != '^')
+            return !p->error;
+        p->pos++;
+        cc_emit8(p, 0x50);
+        if (!cc_parse_bitand(p))
+            return false;
+        cc_emit_right_operand(p);
+        cc_emit8(p, 0x48);                     /* xor rax, rcx */
+        cc_emit8(p, 0x31);
+        cc_emit8(p, 0xC8);
+    }
+}
+
+static bool cc_parse_bitor(struct cc_parser *p)
+{
+    if (!cc_parse_bitxor(p))
+        return false;
+    for (;;) {
+        cc_skip(p);
+        if (p->pos >= p->length || p->source[p->pos] != '|' ||
+            (p->pos + 1 < p->length && p->source[p->pos + 1] == '|'))
+            return !p->error;
+        p->pos++;
+        cc_emit8(p, 0x50);
+        if (!cc_parse_bitxor(p))
+            return false;
+        cc_emit_right_operand(p);
+        cc_emit8(p, 0x48);                     /* or rax, rcx */
+        cc_emit8(p, 0x09);
+        cc_emit8(p, 0xC8);
+    }
+}
+
+static bool cc_parse_expression(struct cc_parser *p)
+{
+    return cc_parse_bitor(p);
 }
 
 static void cc_emit_print(struct cc_parser *p, size_t data_offset, size_t length)
@@ -724,12 +858,17 @@ static bool cc_parse_assignment(struct cc_parser *p, bool semicolon)
             cc_emit8(p, 0x0F);
             cc_emit8(p, 0xAF);
             cc_emit8(p, 0xC1);
-        } else if (op == '/') {
+        } else if (op == '/' || op == '%') {
             cc_emit8(p, 0x48);
             cc_emit8(p, 0x99);
             cc_emit8(p, 0x48);
             cc_emit8(p, 0xF7);
             cc_emit8(p, 0xF9);
+            if (op == '%') {
+                cc_emit8(p, 0x48);
+                cc_emit8(p, 0x89);
+                cc_emit8(p, 0xD0);
+            }
         } else {
             cc_emit8(p, 0x48);
             cc_emit8(p, op == '+' ? 0x01 : 0x29);
