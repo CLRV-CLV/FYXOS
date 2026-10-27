@@ -256,6 +256,44 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/f.c int add(int a,int b){return a+b\\;}"
+            "int mul(int a,int b){return a*b\\;}int main(){return mul(add(2,3),8)+2\\;};"
+            "fyxcc /home/user/f.c /home/user/f.elf;run /home/user/f.elf;"
+            "write /home/user/r.c int fact(int n){if(n<=1)return 1\\;"
+            "return n*fact(n-1)\\;}int main(){return fact(3)*7\\;};"
+            "fyxcc /home/user/r.c /home/user/r.elf;run /home/user/r.elf;"
+            "write /home/user/v.c int pick(int x){switch(x){case 1:return 10\\;"
+            "default:return 2\\;}}int main(){return pick(1)+pick(9)+30\\;};"
+            "fyxcc /home/user/v.c /home/user/v.elf;run /home/user/v.elf;"
+            "write /home/user/a.c int answer(void){puts(\"FN_OK\")\\;return 42\\;}"
+            "int main(){return answer()\\;};"
+            "fyxcc /home/user/a.c /home/user/a.elf;run /home/user/a.elf;"
+            "write /home/user/forward.c int main(){return later()\\;}"
+            "int later(void){return 42\\;};"
+            "fyxcc /home/user/forward.c /home/user/forward.elf;"
+            "write /home/user/arity.c int one(int x){return x\\;}"
+            "int main(){return one()\\;};"
+            "fyxcc /home/user/arity.c /home/user/arity.elf;shutdown"
+        )
+        out, _ = run_case("functions", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        for name, label in (("f", "多参数与嵌套调用"),
+                            ("r", "递归参数帧"),
+                            ("v", "helper 内 switch/return"),
+                            ("a", "无参 helper 与 syscall 返回")):
+            expect(out, f"[run] /home/user/{name}.elf 退出码=42", label)
+        expect(out, "FN_OK", "helper 内 puts")
+        expect(out, "unknown function (define it before use)",
+               "未定义前向调用诊断")
+        expect(out, "function argument count mismatch", "参数个数诊断")
+        print("  [PASS] C 自定义函数、栈传参、嵌套/递归调用与入口/返回诊断")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 函数调用：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"

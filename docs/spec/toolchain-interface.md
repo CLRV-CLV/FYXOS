@@ -17,8 +17,12 @@
 > `continue` 在 `for` 中先执行迭代表达式，在 `do…while` 中跳到尾部条件；
 > `?:` 只求值选中的分支。switch 的 case 目前限于有符号 int32 整数字面量，
 > 最多 64 个标签，支持 default、fallthrough 和嵌套；`break` 退出最近的循环或
-> switch，`continue` 穿过 switch 继续最近的外层循环。自定义函数、指针、数组、
-> 结构体、预处理器与 libc 仍未实现。
+> switch，`continue` 穿过 switch 继续最近的外层循环。程序含 main 在内最多
+> 16 个 `int` 函数，且必须有一个无参 `int main`；每函数最多 4 个 `int` 参数、16 个局部/参数
+> 变量，参数按源码顺序压栈，调用方清理，支持嵌套和递归调用。ELF 入口先跳转到
+> main，helper 的 return 恢复 rbp/rsp 后 ret，main 的 return 仍映射 SYS_EXIT。
+> 被调用函数必须先定义（自身递归除外）；函数原型/前向声明、函数指针、其它
+> 类型、独立目标文件/链接、指针、数组、结构体、预处理器与 libc 仍未实现。
 
 ---
 

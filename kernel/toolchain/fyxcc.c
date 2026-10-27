@@ -21,6 +21,8 @@
 #define CC_VAR_NAME    24u
 #define CC_MAX_DEPTH   32u
 #define CC_MAX_CASES   64u
+#define CC_MAX_FUNCS   16u
+#define CC_MAX_PARAMS  4u
 #define CC_FRAME_SIZE  ((CC_MAX_VARS + CC_MAX_DEPTH) * 8u)
 #define CC_CONTROL_LOOP   1u
 #define CC_CONTROL_SWITCH 2u
@@ -35,7 +37,14 @@ struct cc_fixup {
 
 struct cc_var {
     char name[CC_VAR_NAME];
-    u32 offset;                             /* rbp - offset */
+    u32 offset;                             /* 局部：rbp-offset；参数：rbp+offset */
+    bool parameter;
+};
+
+struct cc_function {
+    char name[CC_VAR_NAME];
+    size_t address;
+    u32 param_count;
 };
 
 struct cc_control {
@@ -66,6 +75,9 @@ struct cc_parser {
     size_t fixup_count;
     struct cc_var vars[CC_MAX_VARS];
     u32 var_count;
+    struct cc_function functions[CC_MAX_FUNCS];
+    u32 function_count;
+    bool current_is_main;
     u32 depth;
     struct cc_control controls[CC_MAX_DEPTH];
     u32 control_depth;
@@ -286,6 +298,29 @@ static void cc_emit_imm_rcx(struct cc_parser *p, i64 value)
     cc_emit32(p, (u32)(i32)value);
 }
 
+static void cc_emit_call(struct cc_parser *p, const struct cc_function *fn)
+{
+    cc_emit8(p, 0xE8);                         /* call rel32 */
+    size_t disp_pos = p->code_pos;
+    cc_emit32(p, 0);
+    i64 displacement = (i64)fn->address - (i64)p->code_pos;
+    if (displacement < -0x80000000ll || displacement > 0x7FFFFFFFll) {
+        cc_fail(p, "call displacement out of range");
+        return;
+    }
+    cc_patch32(p, disp_pos, (u32)(i32)displacement);
+}
+
+static void cc_emit_discard_args(struct cc_parser *p, u32 count)
+{
+    if (!count)
+        return;
+    cc_emit8(p, 0x48);                         /* add rsp, count * 8 */
+    cc_emit8(p, 0x81);
+    cc_emit8(p, 0xC4);
+    cc_emit32(p, count * 8u);
+}
+
 static void cc_emit_prologue(struct cc_parser *p)
 {
     cc_emit8(p, 0x55);                         /* push rbp */
@@ -323,20 +358,50 @@ static struct cc_var *cc_add_var(struct cc_parser *p, const char *name)
     return var;
 }
 
+static struct cc_function *cc_find_function(struct cc_parser *p,
+                                             const char *name)
+{
+    for (u32 i = 0; i < p->function_count; i++)
+        if (strcmp(p->functions[i].name, name) == 0)
+            return &p->functions[i];
+    return NULL;
+}
+
+static struct cc_function *cc_add_function(struct cc_parser *p,
+                                            const char *name, u32 param_count)
+{
+    if (cc_find_function(p, name)) {
+        cc_fail(p, "duplicate function");
+        return NULL;
+    }
+    if (p->function_count >= CC_MAX_FUNCS) {
+        cc_fail(p, "too many functions");
+        return NULL;
+    }
+    struct cc_function *fn = &p->functions[p->function_count++];
+    memset(fn, 0, sizeof(*fn));
+    strncpy(fn->name, name, sizeof(fn->name) - 1);
+    fn->address = p->code_pos;
+    fn->param_count = param_count;
+    return fn;
+}
+
 static void cc_emit_load_var(struct cc_parser *p, const struct cc_var *var)
 {
-    cc_emit8(p, 0x48);                         /* mov rax, [rbp-disp32] */
+    i32 displacement = var->parameter ? (i32)var->offset : -(i32)var->offset;
+    cc_emit8(p, 0x48);                         /* mov rax, [rbp+disp32] */
     cc_emit8(p, 0x8B);
     cc_emit8(p, 0x85);
-    cc_emit32(p, (u32)(-(i32)var->offset));
+    cc_emit32(p, (u32)displacement);
 }
 
 static void cc_emit_store_var(struct cc_parser *p, const struct cc_var *var)
 {
-    cc_emit8(p, 0x48);                         /* mov [rbp-disp32], rax */
+    i32 displacement = var->parameter ? (i32)var->offset : -(i32)var->offset;
+    cc_emit8(p, 0x48);                         /* mov [rbp+disp32], rax */
     cc_emit8(p, 0x89);
     cc_emit8(p, 0x85);
-    cc_emit32(p, (u32)(-(i32)var->offset));
+    cc_emit32(p, (u32)displacement);
 }
 
 static void cc_emit_increment(struct cc_parser *p, bool decrement)
@@ -577,6 +642,37 @@ static bool cc_parse_primary(struct cc_parser *p)
     }
     char name[CC_VAR_NAME];
     if (cc_identifier(p, name)) {
+        if (cc_consume(p, '(')) {
+            struct cc_function *fn = cc_find_function(p, name);
+            if (!fn) {
+                cc_fail(p, "unknown function (define it before use)");
+                return false;
+            }
+            u32 arg_count = 0;
+            if (!cc_consume(p, ')')) {
+                for (;;) {
+                    if (arg_count >= CC_MAX_PARAMS) {
+                        cc_fail(p, "too many function arguments");
+                        return false;
+                    }
+                    if (!cc_parse_expression(p))
+                        return false;
+                    cc_emit8(p, 0x50);         /* push 参数，按源码从左到右 */
+                    arg_count++;
+                    if (cc_consume(p, ')'))
+                        break;
+                    if (!cc_expect(p, ','))
+                        return false;
+                }
+            }
+            if (arg_count != fn->param_count) {
+                cc_fail(p, "function argument count mismatch");
+                return false;
+            }
+            cc_emit_call(p, fn);
+            cc_emit_discard_args(p, arg_count);
+            return !p->error;
+        }
         struct cc_var *var = cc_find_var(p, name);
         if (!var) {
             cc_fail(p, "unknown local variable");
@@ -928,6 +1024,14 @@ static void cc_emit_print(struct cc_parser *p, size_t data_offset, size_t length
 
 static void cc_emit_return(struct cc_parser *p)
 {
+    if (!p->current_is_main) {
+        cc_emit8(p, 0x48);                     /* mov rsp, rbp；丢弃局部帧 */
+        cc_emit8(p, 0x89);
+        cc_emit8(p, 0xEC);
+        cc_emit8(p, 0x5D);                     /* pop rbp */
+        cc_emit8(p, 0xC3);                     /* ret；返回值留在 rax */
+        return;
+    }
     cc_emit8(p, 0x89);                         /* mov edi, eax */
     cc_emit8(p, 0xC7);
     cc_emit_syscall(p, 0x1013);                /* SYS_EXIT */
@@ -1316,25 +1420,92 @@ static bool cc_parse_statement(struct cc_parser *p)
     return cc_parse_assignment_or_expression(p, true);
 }
 
-static bool cc_parse_program(struct cc_parser *p)
+static bool cc_parse_function(struct cc_parser *p, bool *saw_main,
+                              size_t *main_address)
 {
-    if (!cc_expect_word(p, "int") || !cc_expect_word(p, "main") ||
-        !cc_expect(p, '('))
+    if (!cc_expect_word(p, "int"))
         return false;
-    cc_word(p, "void");                       /* 可选的 void 参数 */
-    if (!cc_expect(p, ')'))
-        return false;
-    cc_emit_prologue(p);
-    if (!cc_parse_block(p))
-        return false;
-    cc_skip(p);
-    if (p->pos != p->length) {
-        cc_fail(p, "trailing tokens after main");
+    char name[CC_VAR_NAME];
+    if (!cc_identifier(p, name)) {
+        cc_fail(p, "expected function name");
         return false;
     }
-    /* 所有控制流路径都有合法的 fall-through return 0；显式 return 不会到达这里。 */
-    cc_emit_imm(p, 0);
+    if (!cc_expect(p, '('))
+        return false;
+
+    char param_names[CC_MAX_PARAMS][CC_VAR_NAME];
+    u32 param_count = 0;
+    if (cc_word(p, "void")) {
+        if (!cc_expect(p, ')'))
+            return false;
+    } else if (!cc_consume(p, ')')) {
+        for (;;) {
+            if (param_count >= CC_MAX_PARAMS) {
+                cc_fail(p, "too many function parameters");
+                return false;
+            }
+            if (!cc_expect_word(p, "int") ||
+                !cc_identifier(p, param_names[param_count])) {
+                cc_fail(p, "expected int parameter");
+                return false;
+            }
+            param_count++;
+            if (cc_consume(p, ')'))
+                break;
+            if (!cc_expect(p, ','))
+                return false;
+        }
+    }
+
+    bool is_main = strcmp(name, "main") == 0;
+    if (is_main && param_count) {
+        cc_fail(p, "main parameters are not supported");
+        return false;
+    }
+    p->var_count = 0;
+    p->depth = 0;
+    p->control_depth = 0;
+    p->current_is_main = is_main;
+    struct cc_function *fn = cc_add_function(p, name, param_count);
+    if (!fn)
+        return false;
+    cc_emit_prologue(p);
+
+    for (u32 i = 0; i < param_count; i++) {
+        struct cc_var *var = cc_add_var(p, param_names[i]);
+        if (!var)
+            return false;
+        var->parameter = true;
+        var->offset = 16u + (param_count - 1u - i) * 8u;
+    }
+    if (!cc_parse_block(p))
+        return false;
+    cc_emit_imm(p, 0);                        /* int 函数 fall-through 返回 0 */
     cc_emit_return(p);
+    if (is_main) {
+        *saw_main = true;
+        *main_address = fn->address;
+    }
+    return !p->error;
+}
+
+static bool cc_parse_program(struct cc_parser *p)
+{
+    size_t entry_jump = cc_emit_jmp(p);       /* ELF 入口跳到 main，而非首个 helper */
+    bool saw_main = false;
+    size_t main_address = 0;
+    for (;;) {
+        cc_skip(p);
+        if (p->pos == p->length)
+            break;
+        if (!cc_parse_function(p, &saw_main, &main_address))
+            return false;
+    }
+    if (!saw_main) {
+        cc_fail(p, "missing main function");
+        return false;
+    }
+    cc_patch_jump(p, entry_jump, main_address);
     return !p->error;
 }
 
@@ -1381,50 +1552,55 @@ int fyxcc_compile(const char *source, size_t source_len,
     if (source_len > CC_IMAGE_CAP)
         return -FYX_ERANGE;
 
-    struct cc_parser p;
-    memset(&p, 0, sizeof(p));
-    p.source = source;
-    p.length = source_len;
-    p.code_pos = CC_CODE_OFFSET;
-    p.image = kzalloc(CC_IMAGE_CAP);
-    p.data = kmalloc(CC_DATA_CAP);
-    p.diagnostic = diagnostic;
-    if (!p.image || !p.data) {
-        kfree(p.image);
-        kfree(p.data);
+    /* 解析器包含控制/函数/标签表；堆分配避免占用 16 KiB 内核线程栈的大半。 */
+    struct cc_parser *p = kzalloc(sizeof(*p));
+    if (!p)
+        return -FYX_ENOMEM;
+    p->source = source;
+    p->length = source_len;
+    p->code_pos = CC_CODE_OFFSET;
+    p->image = kzalloc(CC_IMAGE_CAP);
+    p->data = kmalloc(CC_DATA_CAP);
+    p->diagnostic = diagnostic;
+    if (!p->image || !p->data) {
+        kfree(p->image);
+        kfree(p->data);
+        kfree(p);
         return -FYX_ENOMEM;
     }
 
-    if (cc_parse_program(&p) && !p.error) {
-        size_t data_start = p.code_pos;
-        if (data_start + p.data_len > CC_IMAGE_CAP) {
-            cc_fail(&p, "ELF image is too large");
+    if (cc_parse_program(p) && !p->error) {
+        size_t data_start = p->code_pos;
+        if (data_start + p->data_len > CC_IMAGE_CAP) {
+            cc_fail(p, "ELF image is too large");
         } else {
-            memcpy(p.image + data_start, p.data, p.data_len);
-            size_t image_size = data_start + p.data_len;
-            for (size_t i = 0; i < p.fixup_count; i++) {
-                struct cc_fixup *f = &p.fixups[i];
+            memcpy(p->image + data_start, p->data, p->data_len);
+            size_t image_size = data_start + p->data_len;
+            for (size_t i = 0; i < p->fixup_count; i++) {
+                struct cc_fixup *f = &p->fixups[i];
                 i64 target = (i64)(CC_BASE + data_start + f->data_offset);
                 i64 next = (i64)(CC_BASE + f->next_ip);
                 i64 displacement = target - next;
                 if (displacement < -0x80000000ll || displacement > 0x7FFFFFFFll) {
-                    cc_fail(&p, "RIP displacement out of range");
+                    cc_fail(p, "RIP displacement out of range");
                     break;
                 }
-                cc_patch32(&p, f->disp_pos, (u32)(i32)displacement);
+                cc_patch32(p, f->disp_pos, (u32)(i32)displacement);
             }
-            if (!p.error) {
-                cc_make_elf(&p, image_size);
-                *out_image = p.image;
+            if (!p->error) {
+                cc_make_elf(p, image_size);
+                *out_image = p->image;
                 *out_size = image_size;
-                kfree(p.data);
+                kfree(p->data);
+                kfree(p);
                 return FYX_OK;
             }
         }
     }
-    int error = p.error ? p.error : -FYX_EINVAL;
-    kfree(p.image);
-    kfree(p.data);
+    int error = p->error ? p->error : -FYX_EINVAL;
+    kfree(p->image);
+    kfree(p->data);
+    kfree(p);
     return error;
 }
 

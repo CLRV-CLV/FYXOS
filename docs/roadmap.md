@@ -133,13 +133,15 @@ quick、PNG 像素和 guest/host 帧校验均已接入验收，详见
 Rust / Go / Zig / Python / Node 等通过统一接口接入 → 移植 git。
 
 **当前实现（已实跑通过）**：`fyxcc` 在内核中把小型 C 子集直接编译为静态
-x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；支持单个 `int main`、
-最多 16 个栈上局部整数变量、简单/复合赋值、算术/比较/移位/位/逻辑运算、
-局部变量 `++/--`、`if/else`、`while/do…while/for`、`switch/case/default`、
-`break/continue`、`?:`、嵌套块和 `puts/print`；重复编译、分支、循环、前/后缀、
-逻辑短路、条件分支单分支求值、switch fallthrough/嵌套/顺序标签隔离、
-switch 与循环的 break/continue 归属、优先级和 ring3 退出码均有自动化验收。
-它目前不是完整 C。`fyxjs`/`jsc` 另提供 FyxJS v1 前端：`function main`、
+x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；支持多个 `int` 函数、
+一个无参 `int main`、每函数最多 16 个局部/参数整数和 4 个栈传参，以及直接、
+嵌套和递归调用（被调用方先定义，自身递归除外）。还支持简单/复合赋值、
+算术/比较/移位/位/逻辑运算、局部变量 `++/--`、`if/else`、
+`while/do…while/for`、`switch/case/default`、`break/continue`、`?:`、嵌套块和
+`puts/print`；重复编译、分支、循环、前/后缀、逻辑短路、条件分支单分支求值、
+switch fallthrough/嵌套/顺序标签隔离、switch 与循环的 break/continue 归属、
+多参数/递归/helper 内 syscall 与返回、优先级和 ring3 退出码均有自动化验收。
+它目前没有函数原型/前向声明、函数指针或其它类型，不是完整 C。`fyxjs`/`jsc` 另提供 FyxJS v1 前端：`function main`、
 `let`、严格比较、`console.log` 和 `process.exit` 已生成同一种原生 ELF 并实跑
 返回 42；动态类型、对象、闭包、数组、事件循环和 JS 库未实现，完整多语言
 工具链仍是后续目标。
