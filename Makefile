@@ -1,0 +1,321 @@
+# ============================================================================
+#  FYXOS — 构建系统
+#
+#  目标一览：
+#    make            -> build/fyxos.img（可引导磁盘镜像）
+#    make kernel     -> build/fyxos.elf（ELF64 内核）
+#    make boot       -> build/stage1.bin + build/stage2.bin
+#    make sdk        -> build/fyxos-sdk/ + build/fyxos-sdk.tar.gz + GCC 示例 ELF
+#    make iso        -> build/fyxos.iso（BIOS Live ISO，可导入 VMware）
+#    make test-iso   -> ISO 结构 + 两次完整 ATAPI 启动/Live 易失性验收
+#    make app-image APP=... -> 把自定义 GCC ELF 预装进新镜像
+#    make emu        -> 在 Unicorn 台架上真实启动（BIOS 实模式全链路）
+#    make emu-quick  -> 跳过引导扇区，直接把内核载入 64 位引擎启动
+#    make test       -> 跑全部自动化测试
+#    make clean
+#
+#  工具链要求：gcc / GNU as / GNU ld（freestanding），静态 glibc 与 dpkg-deb
+#  （Linux/DEB 验收载荷），GNU objcopy（PE32+），Python 3 + unicorn（仅测试）
+# ============================================================================
+
+ARCH        ?= x86_64
+BUILD       ?= build
+IMG         ?= $(BUILD)/fyxos.img
+ISO         ?= $(BUILD)/fyxos.iso
+KERNEL_ELF  ?= $(BUILD)/fyxos.elf
+
+CC          := gcc
+AS          := as
+LD          := ld
+OBJCOPY     := objcopy
+PYTHON      ?= python3
+VENV_PY     := .venv/bin/python
+ifeq ($(wildcard $(VENV_PY)),)
+  PY := $(PYTHON)
+else
+  PY := $(VENV_PY)
+endif
+
+# ---- 通用警告 --------------------------------------------------------------
+WARNINGS := -Wall -Wextra -Wno-unused-parameter -Wno-unused-function \
+            -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes \
+            -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs
+
+# ---- 内核（64 位 freestanding） --------------------------------------------
+KCFLAGS := -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector \
+           -fno-builtin -fno-common -fno-asynchronous-unwind-tables \
+           -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+           -mno-80387 -mno-avx -fno-omit-frame-pointer \
+           -O2 -g -Wa,--noexecstack -Iinclude $(WARNINGS)
+KLDFLAGS := -m elf_x86_64 -nostdlib -z max-page-size=0x1000
+
+# ---- 用户态（freestanding 静态 ELF64，非 PIE） ------------------------------
+UCFLAGS := -std=gnu11 -ffreestanding -fno-pie -no-pie -static \
+           -fno-stack-protector -fno-builtin -fno-common \
+           -fno-asynchronous-unwind-tables -fomit-frame-pointer \
+           -m64 -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx \
+           -O2 -g -Wa,--noexecstack -Iuser $(WARNINGS)
+ULDFLAGS := -m elf_x86_64 -nostdlib -z max-page-size=0x1000
+
+USER_C_SRC := $(sort $(shell find user -name '*.c'))
+USER_S_SRC := $(sort $(shell find user -name '*.S'))
+USER_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(USER_C_SRC)) \
+              $(patsubst %.S,$(BUILD)/%.o,$(USER_S_SRC))
+USER_ELF   := $(BUILD)/user/init.elf
+
+# ---- 开源 GCC C11 SDK 与预装的独立示例程序 --------------------------------
+SDK_DIR       := $(BUILD)/fyxos-sdk
+SDK_ARCHIVE   := $(BUILD)/fyxos-sdk.tar.gz
+SDK_STAMP     := $(SDK_DIR)/.stamp
+SDK_DEMO_ELF  := $(BUILD)/sdk/c11-demo.elf
+SDK_HELLO_ELF := $(BUILD)/sdk/hello.elf
+SDK_INPUTS    := $(shell find sdk -type f) tools/mksdk.py \
+                 user/start.S user/user.ld user/fyx.h
+
+# ---- Linux/DEB 与 Win64 PE32+ 兼容验收载荷 ---------------------------------
+COMPAT_DIR    := $(BUILD)/compat/deb-demo
+COMPAT_DEB    := $(BUILD)/compat/fyx-deb-demo.deb
+COMPAT_PLAIN_DEB := $(BUILD)/compat/fyx-deb-plain-demo.deb
+COMPAT_BAD_DEB := $(BUILD)/compat/fyx-deb-bad-gzip.deb
+COMPAT_PLAIN_DIR := $(BUILD)/compat/deb-plain
+COMPAT_INPUTS := compat/deb-demo/hello.c compat/deb-demo/control
+COMPAT_PLAIN_INPUTS := compat/deb-demo/control-plain compat/deb-demo/plain-note
+WIN64_EXE     := $(BUILD)/compat/win64-demo.exe
+WIN64_BAD_EXE := $(BUILD)/compat/win64-bad-import.exe
+WIN64_OBJ     := $(BUILD)/compat/win64-demo.o
+
+# ---- stage2 的 32 位 C 部分（freestanding） --------------------------------
+SCFLAGS := -std=gnu11 -ffreestanding -fno-pie -fno-stack-protector \
+           -fno-builtin -fno-common -fno-asynchronous-unwind-tables \
+           -m32 -fno-pic -fno-omit-frame-pointer -Wa,--noexecstack \
+           -Os -g -Iinclude $(WARNINGS) -Iboot
+SLDFLAGS := -m elf_i386
+
+# 注意：kernel/arch/x86_64/ 是三层目录，两层的 wildcard 匹配不到，
+#      因此统一用 find 递归收集源文件。
+KERNEL_C_SRC := $(sort $(shell find kernel -name '*.c'))
+KERNEL_S_SRC := $(sort $(shell find kernel -name '*.S'))
+KERNEL_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(KERNEL_C_SRC)) \
+                $(patsubst %.S,$(BUILD)/%.o,$(KERNEL_S_SRC))
+
+STAGE2_OBJS := $(BUILD)/boot/stage2_16.o $(BUILD)/boot/stage2_32.o \
+               $(BUILD)/boot/stage2_32c.o
+
+# 头文件依赖：用 -MMD -MP 生成 .d 文件。
+# 没有这个，改动 boot_info.h 之类的头文件时 .o 不会重编，
+# 于是 stage2_32 还会去旧的暂存地址找 ELF，报出莫名其妙的 "not an ELF"。
+DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
+
+DEPFLAGS := -MMD -MP
+
+.PHONY: all kernel boot user sdk compat image iso app-image emu emu-quick emu-iso test test-iso test-sdk test-compat test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
+
+kernel: $(KERNEL_ELF)
+
+all: image
+
+# ---------------------------------------------------------------- 内核 ELF
+$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
+	@mkdir -p $(dir $@)
+	$(LD) $(KLDFLAGS) -T kernel/linker.ld -o $@ $(KERNEL_OBJS)
+	@echo "  LD      $@"
+
+$(BUILD)/kernel/%.o: kernel/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(KCFLAGS) $(DEPFLAGS) -c -o $@ $<
+	@echo "  CC      $<"
+
+$(BUILD)/kernel/%.o: kernel/%.S
+	@mkdir -p $(dir $@)
+	$(CC) $(KCFLAGS) $(DEPFLAGS) -c -o $@ $<
+	@echo "  AS      $<"
+
+# ------------------------------------------------------ Linux/DEB 兼容验收载荷
+compat: $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
+
+$(COMPAT_DEB): $(COMPAT_INPUTS)
+	@rm -rf $(COMPAT_DIR)
+	@mkdir -p $(COMPAT_DIR)/root/usr/bin $(COMPAT_DIR)/root/DEBIAN $(dir $@)
+	$(CC) -static -Os -no-pie -fno-pie -fno-stack-protector \
+	      -ffunction-sections -fdata-sections -Wl,--gc-sections \
+	      -o $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo compat/deb-demo/hello.c
+	strip --strip-all $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
+	cp compat/deb-demo/control $(COMPAT_DIR)/root/DEBIAN/control
+	dpkg-deb -Zgzip -z9 --root-owner-group --build $(COMPAT_DIR)/root $@
+	@echo "  DEB     $@ (static Linux x86_64 / gzip amd64)"
+
+$(COMPAT_PLAIN_DEB): $(COMPAT_PLAIN_INPUTS)
+	@rm -rf $(COMPAT_PLAIN_DIR)
+	@mkdir -p $(COMPAT_PLAIN_DIR)/root/etc $(COMPAT_PLAIN_DIR)/root/DEBIAN $(dir $@)
+	cp compat/deb-demo/control-plain $(COMPAT_PLAIN_DIR)/root/DEBIAN/control
+	cp compat/deb-demo/plain-note $(COMPAT_PLAIN_DIR)/root/etc/fyx-deb-plain-ok
+	dpkg-deb -Znone --root-owner-group --build $(COMPAT_PLAIN_DIR)/root $@
+	@echo "  DEB     $@ (uncompressed amd64 regression)"
+
+$(COMPAT_BAD_DEB): $(COMPAT_PLAIN_DEB) tools/mkdeb_bad_gzip.py
+	dpkg-deb -Zgzip -z9 --root-owner-group --build $(COMPAT_PLAIN_DIR)/root \
+	          $(BUILD)/compat/fyx-deb-gzip-probe.deb
+	$(PY) tools/mkdeb_bad_gzip.py --input $(BUILD)/compat/fyx-deb-gzip-probe.deb --output $@
+
+# GNU as 先解析单节内的 RIP 相对引用，再由脚本写标准 DOS/PE32+ 头。
+$(WIN64_OBJ): compat/win64-demo/hello.S
+	@mkdir -p $(dir $@)
+	$(CC) -c -o $@ $<
+
+$(WIN64_EXE): $(WIN64_OBJ) tools/mkpe64.py
+	$(PY) tools/mkpe64.py --object $(WIN64_OBJ) --output $@
+
+$(WIN64_BAD_EXE): $(WIN64_EXE) tools/mkwin64_bad_import.py
+	$(PY) tools/mkwin64_bad_import.py --input $(WIN64_EXE) --output $@
+
+# ------------------------------------------------------------------ 用户态
+# 用户程序先编成静态 ELF64，再由 kernel/sys/init_image.S 用 .incbin 作为
+# 首启安装种子带入内核；storage_init 会把它写入 /bin/init，之后均从 VFS 装载。
+user: $(USER_ELF)
+
+$(USER_ELF): $(USER_OBJS) user/user.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(ULDFLAGS) -T user/user.ld -o $@ $(USER_OBJS)
+	@echo "  LD      $@"
+
+$(BUILD)/user/%.o: user/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(UCFLAGS) -c -o $@ $<
+	@echo "  CC      $<"
+
+$(BUILD)/user/%.o: user/%.S
+	@mkdir -p $(dir $@)
+	$(CC) $(UCFLAGS) -c -o $@ $<
+	@echo "  AS      $<"
+
+# SDK 由开源 GCC 构建；c11-demo.elf 是随系统预装的独立 ring3 程序。
+sdk: $(SDK_ARCHIVE) $(SDK_DEMO_ELF) $(SDK_HELLO_ELF)
+
+$(SDK_STAMP): $(SDK_INPUTS)
+	$(PY) tools/mksdk.py --output $(SDK_DIR) --archive $(SDK_ARCHIVE) \
+	                     --demo $(SDK_DEMO_ELF) --hello $(SDK_HELLO_ELF)
+	@touch $@
+
+$(SDK_ARCHIVE) $(SDK_DEMO_ELF) $(SDK_HELLO_ELF): $(SDK_STAMP)
+	@test -f $@
+
+# 把 SDK 生成的自定义程序装进新镜像；guest 中仍运行 /bin/gcc-c11-demo。
+app-image: $(SDK_STAMP)
+	@if [ -z "$(APP)" ]; then echo "用法: make app-image APP=build/my-app.elf"; exit 2; fi
+	@test -f "$(APP)" || { echo "应用不存在: $(APP)"; exit 2; }
+	cp "$(APP)" $(SDK_DEMO_ELF)
+	rm -f $(BUILD)/kernel/sys/init_image.o
+	$(MAKE) image
+
+# init_image.S 用 .incbin 内嵌用户 ELF，必须显式声明这个依赖；
+# 否则用户程序更新后只会重链内核，旧 blob 仍留在 init_image.o 里。
+$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
+
+# ------------------------------------------------------------------ 引导器
+boot: $(BUILD)/stage1.bin $(BUILD)/stage2.bin
+
+$(BUILD)/stage1.bin: boot/stage1.S boot/stage1.ld
+	@mkdir -p $(dir $@)
+	$(CC) -m32 -x assembler-with-cpp -I boot -c -o $(BUILD)/stage1.o $<
+	$(LD) -m elf_i386 -T boot/stage1.ld --oformat=binary -o $@ $(BUILD)/stage1.o
+	@s=`stat -c %s $@`; if [ "$$s" -ne 512 ]; then \
+	    echo "ERROR: stage1 must be exactly 512 bytes (got $$s)"; exit 1; fi
+	@echo "  AS+LD   $@ (512 bytes)"
+
+$(BUILD)/stage2.bin: $(STAGE2_OBJS) boot/stage2.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(SLDFLAGS) -T boot/stage2.ld --oformat=binary -o $@ $(STAGE2_OBJS)
+	@echo "  LD      $@"
+
+# 注意：必须用 gcc（而非直接 as）来汇编 .S —— as 不会做 C 预处理，
+#      宏不会被展开，会被当成外部符号而报 "operand type mismatch"。
+$(BUILD)/boot/stage2_16.o: boot/stage2_16.S
+	@mkdir -p $(dir $@)
+	$(CC) -m32 -x assembler-with-cpp -I boot $(DEPFLAGS) -c -o $@ $<
+
+$(BUILD)/boot/stage2_32.o: boot/stage2_32.S
+	@mkdir -p $(dir $@)
+	$(CC) -m32 -x assembler-with-cpp -I boot $(DEPFLAGS) -c -o $@ $<
+
+$(BUILD)/boot/stage2_32c.o: boot/stage2_32.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SCFLAGS) $(DEPFLAGS) -c -o $@ $<
+
+# 自动引入依赖描述文件（不存在时静默跳过）
+-include $(DEPS)
+
+# ------------------------------------------------------------------ 磁盘镜像
+image: $(IMG)
+
+$(IMG): $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(KERNEL_ELF) tools/mkimage.py
+	$(PY) tools/mkimage.py --stage1 $(BUILD)/stage1.bin \
+	                       --stage2 $(BUILD)/stage2.bin \
+	                       --kernel $(KERNEL_ELF) \
+	                       --out $@
+
+# --------------------------------------------------------------- BIOS Live ISO
+iso: $(ISO)
+
+$(ISO): $(IMG) tools/mkiso.py tools/isolive.py docs/vmware-live.md
+	$(PY) tools/mkiso.py --image $(IMG) --readme docs/vmware-live.md --output $@
+
+# -------------------------------------------------------------------- 测试
+emu: image
+	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot $(EMU_ARGS)
+
+emu-quick: $(KERNEL_ELF)
+	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick $(EMU_ARGS)
+
+emu-iso: iso
+	$(PY) tools/fyxemu.py --iso $(ISO) --kernel $(KERNEL_ELF) --mode full-boot $(EMU_ARGS)
+
+test: image iso
+	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/full-desktop.png --test --max-seconds 90
+	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/quick-desktop.png --test --max-seconds 90
+	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
+	$(PY) tools/test_compat.py --kernel $(KERNEL_ELF) --package $(COMPAT_DEB) --payload $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
+	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)
+	$(PY) tools/test_toolchain.py --kernel $(KERNEL_ELF)
+	$(PY) tools/test_git.py --image $(IMG) --kernel $(KERNEL_ELF)
+	$(PY) tools/test_cli.py --image $(IMG) --kernel $(KERNEL_ELF)
+	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
+	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+	$(PY) tools/test_iso.py --iso $(ISO) --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-iso: iso
+	$(PY) tools/test_iso.py --iso $(ISO) --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-sdk: image $(SDK_ARCHIVE)
+	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
+
+test-compat: image
+	$(PY) tools/test_compat.py --kernel $(KERNEL_ELF) --package $(COMPAT_DEB) --payload $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
+
+test-network: image
+	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)
+
+test-toolchain: image
+	$(PY) tools/test_toolchain.py --kernel $(KERNEL_ELF)
+
+test-git: image
+	$(PY) tools/test_git.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-cli: image
+	$(PY) tools/test_cli.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-graphics: image
+	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-storage: image
+	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+# -------------------------------------------------------------------- 辅助
+dump: $(KERNEL_ELF)
+	readelf -h $(KERNEL_ELF)
+	readelf -S $(KERNEL_ELF)
+	nm -n $(KERNEL_ELF) | head -60
+
+clean:
+	rm -rf $(BUILD)
+
+-include $(shell mkdir -p $(BUILD) 2>/dev/null) $(wildcard $(BUILD)/*.d)

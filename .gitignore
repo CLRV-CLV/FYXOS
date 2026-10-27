@@ -1,0 +1,17 @@
+# 构建产物
+build/
+*.o
+*.d
+*.bin
+*.elf
+*.img
+
+# Python 虚拟环境（Unicorn 测试台依赖，用 `python3 -m venv .venv && .venv/bin/pip install unicorn` 重建）
+.venv/
+
+# 编辑器/系统杂物
+.vscode/
+.idea/
+*.swp
+.DS_Store
+__pycache__/

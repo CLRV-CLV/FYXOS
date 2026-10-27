@@ -1,0 +1,24 @@
+{
+  "name": "fyxos-launch-film",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio",
+    "score": "node make-score.mjs",
+    "stills": "node stills.mjs",
+    "render:smoke": "node render.mjs --smoke",
+    "render": "node render.mjs",
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "@fontsource/noto-sans-sc": "5.3.1",
+    "@remotion/bundler": "4.0.539",
+    "@remotion/cli": "4.0.539",
+    "@remotion/renderer": "4.0.539",
+    "@sparticuz/chromium": "153.0.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "remotion": "4.0.539"
+  }
+}

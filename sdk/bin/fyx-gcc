@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Compile a freestanding C program for FYXOS with the host's open-source GCC."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import shutil
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+CC = os.environ.get("FYX_HOST_CC", "gcc")
+
+# Version/query operations must not acquire CRT objects or a linker script.
+if any(arg in {"--version", "-dumpversion", "-dumpmachine"} for arg in sys.argv[1:]):
+    os.execvp(CC, [CC, *sys.argv[1:]])
+
+if not shutil.which(CC):
+    raise SystemExit(f"fyx-gcc: host compiler not found: {CC}")
+
+CFLAGS = [
+    "-std=c11", "-O2", "-g", "-ffreestanding", "-fno-pie",
+    "-fno-stack-protector", "-fno-builtin", "-fno-common",
+    "-fno-asynchronous-unwind-tables", "-fomit-frame-pointer",
+    "-m64", "-mno-red-zone", "-mno-mmx", "-mno-sse", "-mno-sse2",
+    "-mno-80387", "-mno-avx", "-Wa,--noexecstack",
+    "-Wall", "-Wextra", f"-I{ROOT / 'include'}",
+]
+NO_LINK = {"-c", "-S", "-E", "-M", "-MM"}
+link = not any(arg in NO_LINK for arg in sys.argv[1:])
+
+cmd = [CC, *CFLAGS]
+if link:
+    cmd.append(str(ROOT / "lib" / "crt0.o"))
+cmd.extend(sys.argv[1:])
+if link:
+    cmd.extend([
+        "-nostdlib", "-static", "-no-pie",
+        f"-Wl,-T,{ROOT / 'lib' / 'fyxos-user.ld'}",
+        "-Wl,-z,max-page-size=0x1000", "-Wl,--build-id=none",
+        f"-L{ROOT / 'lib'}", "-lfyx", "-lgcc",
+    ])
+os.execvp(CC, cmd)

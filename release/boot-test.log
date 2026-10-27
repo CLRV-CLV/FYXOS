@@ -1,0 +1,135 @@
+[fyxemu] 阶段 1 完成：BIOS 引导 -> 长模式，入口 RIP=0xffffffff80000000, CR3=0x50000
+
+  ███████╗██╗   ██╗██╗  ██╗ ██████╗ ███████╗
+  █���╔════╝╚██╗ ██╔╝╚██╗██╔╝██╔═══██╗██╔════╝
+  █████╗   ╚███���╔╝  ╚███╔╝ ██║   ██║███████╗
+  ██╔══╝    ╚██╔╝   ██╔██╗ ██║   ██║��════██║
+  ██║        ██║   ██╔╝ ██╗╚██████╔╝███████║
+  ╚═╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+
+  FYXOS 0.1.0-phase1 (kernel-core) — 全程自研内核，无���有内核依赖
+  架构 x86-64 | 内核入口 0xffffffff80000000 | 内核结束 0xffffffff8005f000
+
+[cpu] GenuineIntel family 6 model 60 stepping 4
+  vendor="GenuineIntel" family=6 model=60 stepping=4
+  特性: msr=1 tsc=1 syscall=1 nx=1 pge=1 1G=0 sse2=1 avx=0
+  物理地址位宽 40  虚拟地址位宽 48
+
+[boot] 引导信息
+  boot_info @ 0xffff800000005000  magic=0x31585946 version=1
+  引导驱动器 0x80  可用内存 65151 KiB (66714624 字节)
+  内核映像 phys=[0x200000, 0x25f000) virt=0xffffffff80000000
+  HHDM 窗口基址 0xffff800000000000
+  E820 内存映射（4 项）：
+    [ 0] 0x0000000000000000 - 0x000000000009fbff  usable  
+    [ 1] 0x000000000009fc00 - 0x000000000009ffff  reserved
+    [ 2] 0x00000000000f0000 - 0x00000000000fffff  reserved
+    [ 3] 0x0000000000100000 - 0x0000000003ffffff  usable  
+
+[mem] 物理内存 65148 KiB 中可用 61664 KiB（15513 帧）
+[mem] 内核堆 1024 KiB，已用 0 KiB
+
+[test] 运行内核自检...
+  [string] ... ok
+  [printf] ... ok
+  [cpu] ... ok
+  [pmm] ... ok
+  [vmm] ... ok
+  [heap] ... ok
+  [syscall] ... ok
+  [console] ...selftest-console ok
+  [crc32] ... ok
+[test] 自检全部通过（失败 0 项）
+
+[sched] ��动两个抢占式内核线程做轮转演示...
+  demo-a 计数=200  demo-b 计数=200  完成标志=0x3
+  -> 两个线程交替推进即证明抢占式调度与上下文切换正常
+[block] ATA PIO 就绪：65536 扇区（32 MiB）
+[storage] 系统分区 LBA=2048，扇区数=63488
+[storage] 超级块槽全零，初始化新的 FYXFS 卷
+[fyxfs] 格式化完成：7934 个 4KiB 块
+[fyxfs] 挂载成功：generation=1 root=0 next=1/7934 slot=1
+[storage] 已把 init 安装到持久化 /bin/init（41952 字节）
+[storage] 已把 GCC C11 示例安装到 /bin/gcc-c11-demo（17544 字节）
+[fsck] 校验通过：节点=13 快照=0 ��误=0
+[storage] 持久化文件系统���绪：13 节点，generation=16，已分配 33/7934 块
+[net] RTL8139 PCI 设备就绪：I/O=0xc000 MAC=52:54:00:12:34:56
+[net] DHCP 完成：IP=10.0.2.15 网关=10.0.2.2 掩码=255.255.255.0 DNS=10.0.2.2
+[net] ARP 网关 10.0.2.2 -> 52:54:00:65:02:02
+[net] ICMP 网关往返成功：0 ms
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef90 argc=1
+[proc] init 就绪：pid=1 entry=0x400e37
+
+[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令
+fyxos> 
+[init] === FYXOS 用户态已启动（ring 3）===
+[init] pid=1 ppid=0 tid=4
+[init] argc=1 argv[0]=init envp[0]=FYXOS=1
+[init] ring3 UDP socket 通过：DHCP/ARP/IPv4/UDP 收发一致
+[init] ring3 TCP socket 通过：SYN/RST/checksum/分段读取/FIN-EOF 一致
+[init] FYXFS 文件读写与 seek ✓ 内容一致，/bin/init stat 正常
+[init] fork...
+[proc] fork: 1 -> 2（init）
+[init] fork 返回 2[child] fork 返回 0 —— 我是子进程，pid= —— 我是父进程
+2 ppid=1
+[child] 通过管道发送 pipe-ok
+[child] 执行 exec...
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef80 argc=2
+[exec] 新程序已启动，argv[1]=--execed，退出码 7
+[proc] exit: pid=2 code=7
+[init] wait 回收 pid=2 退出码=7  ✓ 与子进程一致
+[init] pipe 收到 pipe-ok  ✓ 内容一致
+[init] 经过 24 个 tick 的忙等，期间被时钟抢占后已正确恢复
+[init] brk 268435456 -> 268443648  ✓ 堆已增长
+
+[init] 全部通过，返回内核 Shell
+[proc] exit: pid=1 code=0
+ifconfig
+eth0: UP
+  MAC  52:54:00:12:34:56
+  IPv4 10.0.2.15  掩码 255.255.255.0  网关 10.0.2.2
+  DNS  10.0.2.2
+  网关 MAC 52:54:00:65:02:02 (已解析)
+  RX=11 TX=12 错误=0 ARP请求=1 ARP回应=1 ICMP回应=1 UDP收/发/丢=1/1/1
+  TCP收/发/丢=4/7/1
+fyxos> ping
+ping 10.0.2.2: ICMP echo 回复，time=0 ms
+fyxos> run /bin/gcc-c11-demo
+[proc] 从 /bin/gcc-c11-demo 读取可执行映像（17544 字节）
+[proc] 装载 /bin/gcc-c11-demo：entry=0x400000 brk=0x10000000 栈顶=0x7fffef80 argc=1
+GCC_C11_OK
+[proc] exit: pid=3 code=42
+[run] /bin/gcc-c11-demo 退出码=42
+fyxos> shutdown
+  关机。
+共执行 4 条命令
+
+[shell] 退出，系统停机
+[fyxemu] 内核请求停机：正常关机
+
+================ 自动化检查 ================
+  [PASS] 内核启动横幅
+  [PASS] 自检全部通过
+  [PASS] 调度演示完成
+  [PASS] ATA 与 FYXFS 挂载
+  [PASS] DHCP 地址配置
+  [PASS] ARP 下一跳解析
+  [PASS] ICMP 网关往返
+  [PASS] 从磁盘加载 init
+  [PASS] ring3 UDP socket
+  [PASS] ring3 TCP socket
+  [PASS] Shell ifconfig
+  [PASS] Shell ping
+  [PASS] 用户态启动
+  [PASS] 用户态文件系统调用
+  [PASS] fork 子进程返回 0
+  [PASS] exec 启动新程序
+  [PASS] wait 回收退出码
+  [PASS] 管道通信
+  [PASS] 用户态时钟与堆
+  [PASS] 未发生 panic
+  注入时钟节拍 10257 次，中断共 10969 次，执行约 372937592 条指令
+============================================
+[fyxemu] 测试通过
