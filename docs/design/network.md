@@ -94,7 +94,10 @@ checksum 的拒绝。坏报文计入 `ifconfig` 的 UDP 丢包统计，不交付
 无效本地主机名为 -1。只有合法 UDP 响应中的 TC 会触发 TCP 回退：连接同一
 DNS/53，发送两字节网络序长度前缀和原查询，再按长度读取完整响应；读取允许
 多次部分 TCP recv，提前 EOF、超时和长度超过 1472 字节都会报错。其他畸形
-UDP 报文不会被误判为截断并重试。当前不缓存、不重传、不递归追 CNAME。
+UDP 报文不会被误判为截断并重试。UDP 无响应时在总超时的一半以相同事务 ID
+重传一次，不扩大调用者的总等待预算。成功 A 记录（包括 TCP 回退结果）进入
+8 项缓存，键为 DNS 服务器与规范化小写 QNAME，根点和大小写不影响命中；
+TTL=0 不缓存，到期后重新查询并更新。当前不做负缓存，也不递归追 CNAME。
 
 ## 6. Shell 与可见状态
 
@@ -133,6 +136,9 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
   `93.184.216.34`，只有忽略第一帧才会通过；
 - `tcpfallback.test` 的 UDP 应答设置 TC，只有继续完成 TCP/53 握手并发送正确
   两字节长度前缀，才会经 TCP 得到 `93.184.216.35`；
+- `retry.test` 只在第二次查询时应答，首命令必须重传才成功；随后
+  `RETRY.TEST.` 必须命中缓存，因为对端不会再应答。`expire.test` 的 TTL=1，
+  首次返回 `.37`，等待 1100ms 后必须重新查询并得到 `.38`；
 - `missing.test`、`empty.test`、`broken.test`、`unknown.test` 分别覆盖
   NXDOMAIN、无 A、压缩指针自环与无响应超时；
 - `gateway.test` 解析为 `10.0.2.2`，随后完成真实 ICMP echo。
@@ -141,7 +147,7 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
 
 ```bash
 make image
-make test-network   # 网络 5 项；基础自检同时要求 ring3 UDP/TCP 全部通过
+make test-network   # 网络 6 项；基础自检同时要求 ring3 UDP/TCP 全部通过
 make test           # full/quick + 网络 + 工具链/Git/CLI/图形/存储全部回归
 ```
 
@@ -156,7 +162,7 @@ DNS 专项日志写入 `build/network-test/dns.log`。full-boot 与 quick 均直
 - TCP 无 listen/server、自适应 RTO、拥塞控制、乱序重组、options 和完整关闭
   状态机；重传仅限固定间隔的 SYN 与单个未确认数据段。
 - 无 IPv6、TLS 和 IP 分片重组。
-- DNS 无缓存、重传、AAAA、CNAME 递归、搜索域和 POSIX getaddrinfo；TCP 回退
+- DNS 无负缓存、AAAA、CNAME 递归、搜索域和 POSIX getaddrinfo；TCP 回退
   当前每次查询只接收一个、最大 1472 字节的 DNS 报文。
 - ARP 目前只缓存一个下一跳；DHCP 首版不做租约续期与多接口配置。
 - RTL8139 首版轮询接收，无 NIC IRQ；大 RX 环绕回与完整错误恢复仍需加强。

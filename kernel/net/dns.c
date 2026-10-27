@@ -3,6 +3,7 @@
 #include <fyxos/socket.h>
 #include <fyxos/lib.h>
 #include <fyxos/sched.h>
+#include <fyxos/sync.h>
 #include <fyxos/x86_64.h>
 
 #define DNS_PORT             53u
@@ -11,8 +12,22 @@
 #define DNS_MAX_POINTERS     32u
 #define DNS_TYPE_A           1u
 #define DNS_CLASS_IN         1u
+#define DNS_CACHE_ENTRIES    8u
+#define DNS_UDP_ATTEMPTS     2u
+
+struct dns_cache_entry {
+    bool valid;
+    u32 server;
+    u32 address;
+    u64 expires;
+    u16 name_len;
+    u8 name[DNS_MAX_NAME];       /* 不含 QTYPE/QCLASS 的规范小写 QNAME */
+};
 
 static u16 g_dns_next_id = 0x4658;
+static struct dns_cache_entry g_dns_cache[DNS_CACHE_ENTRIES];
+static u32 g_dns_cache_replace;
+static spinlock_t g_dns_cache_lock = SPINLOCK_INIT("dns-cache");
 
 static u16 read_be16(const u8 *p) { return ((u16)p[0] << 8) | p[1]; }
 static u32 read_be32(const u8 *p)
@@ -129,9 +144,78 @@ static u8 ascii_lower(u8 c)
     return c >= 'A' && c <= 'Z' ? (u8)(c + ('a' - 'A')) : c;
 }
 
-static int dns_parse_reply(const u8 *packet, size_t length, u16 expected_id,
-                           const u8 *query, size_t query_len, u32 *address)
+static void dns_canonical_name(u8 *name, size_t length)
 {
+    for (size_t i = 0; i < length; i++)
+        name[i] = ascii_lower(name[i]);
+}
+
+static bool dns_cache_lookup(u32 server, const u8 *name, size_t name_len,
+                             u32 *address)
+{
+    bool found = false;
+    u64 now = pit_ticks();
+    u64 irq = irq_save_disable();
+    spin_lock(&g_dns_cache_lock);
+    for (u32 i = 0; i < DNS_CACHE_ENTRIES; i++) {
+        struct dns_cache_entry *entry = &g_dns_cache[i];
+        if (!entry->valid)
+            continue;
+        if (entry->expires <= now) {
+            entry->valid = false;
+            continue;
+        }
+        if (entry->server == server && entry->name_len == name_len &&
+            memcmp(entry->name, name, name_len) == 0) {
+            *address = entry->address;
+            found = true;
+            break;
+        }
+    }
+    spin_unlock(&g_dns_cache_lock);
+    irq_restore(irq);
+    return found;
+}
+
+static void dns_cache_store(u32 server, const u8 *name, size_t name_len,
+                            u32 address, u32 ttl)
+{
+    if (!ttl || name_len > DNS_MAX_NAME)
+        return;
+    u64 now = pit_ticks();
+    u64 irq = irq_save_disable();
+    spin_lock(&g_dns_cache_lock);
+    int reusable = -1, selected = -1;
+    for (u32 i = 0; i < DNS_CACHE_ENTRIES; i++) {
+        struct dns_cache_entry *entry = &g_dns_cache[i];
+        if (entry->valid && entry->expires > now &&
+            entry->server == server && entry->name_len == name_len &&
+            memcmp(entry->name, name, name_len) == 0) {
+            selected = (int)i;
+            break;
+        }
+        if (reusable < 0 && (!entry->valid || entry->expires <= now))
+            reusable = (int)i;
+    }
+    if (selected < 0)
+        selected = reusable >= 0 ? reusable
+            : (int)(g_dns_cache_replace++ % DNS_CACHE_ENTRIES);
+    struct dns_cache_entry *entry = &g_dns_cache[selected];
+    entry->server = server;
+    entry->address = address;
+    entry->expires = now + (u64)ttl * pit_frequency();
+    entry->name_len = (u16)name_len;
+    memcpy(entry->name, name, name_len);
+    entry->valid = true;
+    spin_unlock(&g_dns_cache_lock);
+    irq_restore(irq);
+}
+
+static int dns_parse_reply(const u8 *packet, size_t length, u16 expected_id,
+                           const u8 *query, size_t query_len, u32 *address,
+                           u32 *ttl)
+{
+    *ttl = 0;
     if (length < 2)
         return -FYX_EPROTO;
     if (read_be16(packet) != expected_id)
@@ -182,12 +266,14 @@ static int dns_parse_reply(const u8 *packet, size_t length, u16 expected_id,
             return -FYX_EPROTO;
         u16 type = read_be16(packet + offset);
         u16 class = read_be16(packet + offset + 2);
+        u32 record_ttl = read_be32(packet + offset + 4);
         u16 rdlength = read_be16(packet + offset + 8);
         offset += 10;
         if (offset + rdlength > length)
             return -FYX_EPROTO;
         if (type == DNS_TYPE_A && class == DNS_CLASS_IN && rdlength == 4) {
             *address = read_be32(packet + offset);
+            *ttl = record_ttl;
             return FYX_OK;
         }
         offset += rdlength;
@@ -219,7 +305,8 @@ static int dns_tcp_read_exact(struct fyx_socket *socket, void *buffer,
 }
 
 static int dns_resolve_tcp(const u8 *query, size_t query_len, u16 id,
-                           u32 server, u32 *address, u32 timeout_ms)
+                           u32 server, u32 *address, u32 *ttl,
+                           u32 timeout_ms)
 {
     struct fyx_socket *socket = NULL;
     int rc = socket_tcp_open(&socket);
@@ -258,7 +345,7 @@ static int dns_resolve_tcp(const u8 *query, size_t query_len, u16 id,
             rc = dns_tcp_read_exact(socket, reply, reply_len, deadline);
             if (rc == 0) {
                 rc = dns_parse_reply(reply, reply_len, id,
-                                     query, query_len, address);
+                                     query, query_len, address, ttl);
                 if (rc == -FYX_EAGAIN)
                     rc = -FYX_EPROTO;
             }
@@ -286,6 +373,13 @@ int net_dns_resolve(const char *name, u32 *address, u32 timeout_ms)
     if (!info.dns_server)
         return -FYX_ENETUNREACH;
 
+    size_t query_name_len = query_len - DNS_HEADER_SIZE - 4;
+    u8 canonical[DNS_MAX_NAME];
+    memcpy(canonical, query + DNS_HEADER_SIZE, query_name_len);
+    dns_canonical_name(canonical, query_name_len);
+    if (dns_cache_lookup(info.dns_server, canonical, query_name_len, address))
+        return FYX_OK;
+
     struct fyx_socket *socket = NULL;
     rc = socket_udp_open(&socket);
     if (rc != 0)
@@ -303,16 +397,29 @@ int net_dns_resolve(const char *name, u32 *address, u32 timeout_ms)
 
     if (!timeout_ms)
         timeout_ms = 100;
-    u64 deadline = pit_ticks() + dns_ms_to_ticks(timeout_ms);
+    u64 start = pit_ticks();
+    u64 deadline = start + dns_ms_to_ticks(timeout_ms);
+    u64 retry_at = start + dns_ms_to_ticks((timeout_ms + 1) / 2);
+    u32 attempts = 1;
+    u32 ttl = 0;
     u8 reply[NET_MAX_UDP_PAYLOAD];
     rc = -FYX_ETIMEDOUT;
     while (pit_ticks() < deadline) {
+        if (attempts < DNS_UDP_ATTEMPTS && pit_ticks() >= retry_at) {
+            long sent = socket_udp_send(socket, query, query_len);
+            if (sent != (long)query_len) {
+                rc = sent < 0 ? (int)sent : -FYX_EIO;
+                break;
+            }
+            attempts++;
+            rc = -FYX_ETIMEDOUT;
+        }
         net_poll();
         long received = socket_udp_recv(socket, reply, sizeof(reply),
                                         NET_MSG_DONTWAIT, NULL, NULL);
         if (received >= 0) {
             rc = dns_parse_reply(reply, (size_t)received, id,
-                                 query, query_len, address);
+                                 query, query_len, address, &ttl);
             if (rc != -FYX_EAGAIN)
                 break;
         } else if (received != -FYX_EAGAIN) {
@@ -326,7 +433,10 @@ int net_dns_resolve(const char *name, u32 *address, u32 timeout_ms)
         rc = -FYX_ETIMEDOUT;
     socket_release(socket);
     if (rc == -FYX_ERANGE)
-        return dns_resolve_tcp(query, query_len, id, info.dns_server,
-                               address, timeout_ms);
+        rc = dns_resolve_tcp(query, query_len, id, info.dns_server,
+                             address, &ttl, timeout_ms);
+    if (rc == FYX_OK)
+        dns_cache_store(info.dns_server, canonical, query_name_len,
+                        *address, ttl);
     return rc;
 }

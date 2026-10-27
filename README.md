@@ -67,7 +67,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF |
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
 | ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
-| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS UDP/TCP、TCP 重传与 ring3 socket |
+| RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、四则/比较、if/else/while、字符串输出；直接生成静态 x86_64 ET_EXEC |
@@ -87,8 +87,8 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 25 + 网络 5 + 工具链/IDE 2 + Git/CLI 4 + 图形 3 + 存储 5
-make test-network   # DNS、TCP 重传、UDP checksum、ping 主机名与 ICMP
+make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 2 + Git/CLI 4 + 图形 3 + 存储 5
+make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS 编译运行、诊断、Studio 编辑闭环与 PNG 校验
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
 make test-cli        # 原生动词、跨系统别名、rename 与跨重启检查
@@ -112,10 +112,10 @@ FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B �
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
-最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP checksum、单次 DNS A
-查询、主动 TCP 客户端及 DNS 截断后的 TCP 回退；TCP 仅有固定间隔的 SYN/单段
+最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP checksum、DNS A（一次
+UDP 重传、8 项 TTL 缓存）、主动 TCP 客户端及 DNS 截断后的 TCP 回退；TCP 仅有固定间隔的 SYN/单段
 数据重传，尚无 listen/server、自适应 RTO、拥塞控制和乱序重组，也尚无 IPv6、
-TLS、DNS 缓存/重传/AAAA/CNAME 递归和 IP 分片重组。
+TLS、DNS AAAA/CNAME 递归/负缓存和 IP 分片重组。
 FYXFS v1 限 40 节点/16 快照，采用追加分配，尚未实现旧块回收、B 树、压缩、
 去重、GPT、AHCI/NVMe 和权限位；
 这些边界不会被算作已完成。

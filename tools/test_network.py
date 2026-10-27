@@ -28,7 +28,9 @@ def run_dns_case(kernel: str, output_dir: Path, max_seconds: int) -> str:
     output_dir.mkdir(parents=True, exist_ok=True)
     keys = (
         "ifconfig;resolve example.test;resolve EXAMPLE.TEST.;"
-        "resolve tcpfallback.test;resolve missing.test;"
+        "resolve tcpfallback.test;resolve retry.test 80;"
+        "resolve RETRY.TEST. 20;resolve expire.test;sleep 1100;"
+        "resolve expire.test;resolve missing.test;"
         "resolve empty.test;resolve broken.test;resolve bad..name;"
         "resolve unknown.test 20;ping gateway.test;shutdown"
     )
@@ -83,6 +85,19 @@ def main():
     except Exception as error:
         failures += 1
         print(f"  [FAIL] DNS TCP 回退：{error}")
+
+    try:
+        expect(out, "[dns] retry.test -> 93.184.216.36",
+               "首查询丢失后的同 ID UDP 重传")
+        expect(out, "[dns] RETRY.TEST. -> 93.184.216.36",
+               "规范名 TTL 缓存命中")
+        expect(out, "[dns] expire.test -> 93.184.216.37", "TTL 到期前的地址")
+        expect(out, "[dns] expire.test -> 93.184.216.38",
+               "TTL 到期后的重新查询与缓存更新")
+        print("  [PASS] DNS UDP 重传、规范名 TTL 缓存与到期重新查询")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] DNS 重传/缓存：{error}")
 
     try:
         if not re.search(r"UDP[^\r\n]*=1/1/1", out):

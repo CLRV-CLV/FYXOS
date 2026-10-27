@@ -67,6 +67,8 @@ class IPv4Peer:
         self.dns_queries = 0
         self.dns_wrong_id_replies = 0
         self.dns_tcp_queries = 0
+        self.dns_retry_queries = 0
+        self.dns_expire_queries = 0
         self.tcp_synacks = 0
         self.tcp_echoes = 0
         self.tcp_fins = 0
@@ -141,7 +143,7 @@ class IPv4Peer:
     @staticmethod
     def _dns_response(query: bytes, addresses: list[bytes], *, rcode: int = 0,
                       ident: int | None = None, broken: bool = False,
-                      truncated: bool = False) -> bytes:
+                      truncated: bool = False, ttl: int = 60) -> bytes:
         question = query[12:]
         answer_count = 0 if rcode or truncated else (1 if broken else len(addresses))
         if ident is None:
@@ -154,11 +156,11 @@ class IPv4Peer:
             # 答案名字的 pointer 指向自己，客户机必须有界地拒绝环路。
             answer_offset = 12 + len(question)
             answers += struct.pack("!H", 0xC000 | answer_offset)
-            answers += struct.pack("!HHIH", 1, 1, 60, 4) + bytes((192, 0, 2, 1))
+            answers += struct.pack("!HHIH", 1, 1, ttl, 4) + bytes((192, 0, 2, 1))
         else:
             for address in addresses:
                 answers += b"\xc0\x0c"          # 指向原始问题名字
-                answers += struct.pack("!HHIH", 1, 1, 60, 4) + address
+                answers += struct.pack("!HHIH", 1, 1, ttl, 4) + address
         return header + question + bytes(answers)
 
     def _dns(self, query: bytes) -> list[bytes]:
@@ -170,8 +172,20 @@ class IPv4Peer:
             wrong_id = (struct.unpack("!H", query[:2])[0] + 1) & 0xFFFF
             self.dns_wrong_id_replies += 1
             return [self._dns_response(query, [bytes((203, 0, 113, 99))],
-                                       ident=wrong_id),
-                    self._dns_response(query, [bytes((93, 184, 216, 34))])]
+                                       ident=wrong_id, ttl=0),
+                    self._dns_response(query, [bytes((93, 184, 216, 34))],
+                                       ttl=0)]
+        if name == "retry.test":
+            self.dns_retry_queries += 1
+            if self.dns_retry_queries != 2:
+                return []               # 只有首次命令的重传会得到响应
+            return [self._dns_response(query, [bytes((93, 184, 216, 36))],
+                                       ttl=60)]
+        if name == "expire.test":
+            self.dns_expire_queries += 1
+            last = 37 if self.dns_expire_queries == 1 else 38
+            return [self._dns_response(query, [bytes((93, 184, 216, last))],
+                                       ttl=1)]
         if name == "gateway.test":
             return [self._dns_response(query, [self.server_ip])]
         if name == "tcpfallback.test":

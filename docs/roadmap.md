@@ -99,9 +99,10 @@ quick 验收；ring3 init 会向台架 UDP/9 echo 服务发送并校验真实回
 超时。TCP 主动客户端复用原有 5 个 socket syscall，ring3 已实测 SYN/SYN-ACK/
 ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 EOF；SYN
 和单个未确认数据段支持固定 20ms、最多三次发送，UDP 也会生成并校验伪首部
-checksum。DNS 在 UDP TC 后通过同一 TCP 客户端发送长度前缀查询并解析响应。
-当前共 38 个 syscall、65 条 Shell 命令。listen/server、自适应 RTO、拥塞控制、
-乱序重组、IPv6、TLS、DNS 缓存/重传/AAAA/CNAME 递归与 E1000/VirtIO-net 仍未实现，
+checksum。DNS 在 UDP TC 后通过同一 TCP 客户端发送长度前缀查询并解析响应；
+UDP 无响应时以同一事务 ID 重传一次，8 项 A 记录缓存遵循 TTL 并规范化大小写
+和根点。当前共 38 个 syscall、65 条 Shell 命令。listen/server、自适应 RTO、
+拥塞控制、乱序重组、IPv6、TLS、DNS AAAA/CNAME 递归/负缓存与 E1000/VirtIO-net 仍未实现，
 详见 [`docs/design/network.md`](design/network.md)。
 
 ### 阶段 J — 图形栈与桌面
