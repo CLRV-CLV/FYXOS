@@ -284,8 +284,8 @@ def main():
                             ("a", "无参 helper 与 syscall 返回")):
             expect(out, f"[run] /home/user/{name}.elf 退出码=42", label)
         expect(out, "FN_OK", "helper 内 puts")
-        expect(out, "unknown function (prototype or definition required)",
-               "未声明函数调用诊断")
+        expect(out, "unknown function", "未声明函数调用诊断")
+        expect(out, "definition required", "未声明调用需原型或定义")
         expect(out, "function argument count mismatch", "参数个数诊断")
         print("  [PASS] C 自定义函数、栈传参、嵌套/递归调用与入口/返回诊断")
     except Exception as error:
@@ -359,8 +359,8 @@ def main():
         expect(out, "JS_ADD_OK}", "helper 输出及字符串/注释大括号")
         expect(out, "process.exit is only supported in main",
                "helper process.exit 诊断")
-        expect(out, "unknown function (prototype or definition required)",
-               "无提升的前向调用诊断")
+        expect(out, "unknown function", "无提升的前向调用诊断")
+        expect(out, "definition required", "无提升调用需原型或定义")
         expect(out, "missing main function", "缺少 main 诊断")
         expect(out, "unterminated function body", "未闭合函数体诊断")
         print("  [PASS] FyxJS 多函数、参数、递归、词法边界与退出诊断")

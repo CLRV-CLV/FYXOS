@@ -14,4 +14,13 @@ g_init_image_start:
     .align 8
 g_init_image_end:
 
+    /* 由配套开源 GCC C11 SDK 生成的独立示例，不是 fyxcc 的产物。 */
+    .align 16
+    .globl g_gcc_demo_image_start
+    .globl g_gcc_demo_image_end
+g_gcc_demo_image_start:
+    .incbin "build/sdk/c11-demo.elf"
+    .align 8
+g_gcc_demo_image_end:
+
 .section .note.GNU-stack,"",@progbits

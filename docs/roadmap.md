@@ -132,7 +132,15 @@ quick、PNG 像素和 guest/host 帧校验均已接入验收，详见
 顺序：先自举 binutils+GCC（C/C++）→ LLVM/Clang（覆盖更多语言后端）→
 Rust / Go / Zig / Python / Node 等通过统一接口接入 → 移植 git。
 
-**当前实现（已实跑通过）**：`fyxcc` 在内核中把小型 C 子集直接编译为静态
+**Developer Preview 已先交付开源编译器路径**：`make sdk` 生成自包含目录和
+`fyxos-sdk.tar.gz`，由宿主开源 GCC 的完整 C11 前端编译 FYXOS freestanding ELF；
+SDK 含 CRT、W^X 链接脚本、最小 string/stdio 运行库与 libgcc 链接。完整语言示例
+覆盖指针、数组、结构体、枚举、函数指针和 `_Static_assert`，作为独立
+`/bin/gcc-c11-demo` 预装并在 ring3 输出 `GCC_C11_OK`、退出 42。GCC 当前在宿主
+运行，不是 guest 内自举，也不存在 hosted libc；这是首个可用开发产品，不是最终
+全部语言生态。
+
+**内置子集实现（已实跑通过）**：`fyxcc` 在内核中把小型 C 子集直接编译为静态
 x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；支持多个 `int` 函数、
 一个无参 `int main`、每函数最多 16 个局部/参数整数和 4 个栈传参，以及直接、
 嵌套和递归调用、函数原型、前向调用和相互递归（调用前需有声明或定义）。

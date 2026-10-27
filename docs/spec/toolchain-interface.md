@@ -3,6 +3,12 @@
 > 目标：FYXOS **自带全部语言的编译器**。不重新发明 LLVM/GCC，而是定义一套
 > 稳定的接口，把各语言工具链以**统一、可管理、可复现**的方式接进系统。
 >
+> Developer Preview 先以 `sdk/` 配套的开源 GCC C11 SDK 提供完整语言前端：
+> 宿主 GCC 负责编译，SDK 提供 FYXOS CRT、链接脚本、freestanding 最小运行库和
+> `libgcc` 链接，生成静态 x86_64 ELF。指针、数组、结构体、枚举、函数指针与
+> `_Static_assert` 的预装示例已在 ring3 返回 42。GCC 当前不在 guest 内运行，
+> 也没有 hosted libc/Linux ABI；该边界与下列内置子集编译器分开陈述。
+>
 > 当前可运行实现包括 `kernel/toolchain/fyxcc.c` 的小型 C 子集前端，以及
 > `kernel/toolchain/fyxjs.c` 的 FyxJS 静态整数子集前端；两者直接生成静态
 > x86_64 ELF，共用控制流、表达式和代码生成后端。FyxJS 已支持多个 function、

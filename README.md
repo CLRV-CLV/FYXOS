@@ -10,7 +10,7 @@
 
 ---
 
-## 当前进度：A–L 原生 C 工具链与首版 FYX Studio 已落地 ✅
+## 当前交付：FYXOS Developer Preview（自研内核＋开源 GCC C11 SDK）✅
 
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
@@ -23,6 +23,7 @@ BIOS → MBR(stage1) → stage2(A20/E820/ELF 装载/建页表) → 长模式
      → ifconfig/ping/救援 Shell / 快照回滚
      → BGA LFB → 软件背 buffer → 三窗口桌面/主题/焦点 → PNG 帧校验
      → FYXFS C 源码 → 内置 fyxcc → x86_64 ELF → ring3 运行/退出码
+     → 开源 GCC C11 SDK → 独立 /bin/gcc-c11-demo → ring3 输出与退出码 42
      → FYX Studio 编辑/保存/编译/运行 → 正常关机；另有跨重启与 ATA 写点断电恢复测试
 ```
 
@@ -32,8 +33,10 @@ BIOS → MBR(stage1) → stage2(A20/E820/ELF 装载/建页表) → 长模式
 # 1. 准备测试台（只需一次）
 python3 -m venv .venv && .venv/bin/pip install unicorn
 
-# 2. 构建
-make image          # = make boot + make kernel + 生成 build/fyxos.img
+# 2. 构建可启动镜像与开源 GCC C11 SDK
+make image          # build/fyxos.img；预装 /bin/gcc-c11-demo
+make sdk            # build/fyxos-sdk/ 与 build/fyxos-sdk.tar.gz
+./build/fyxos-sdk/bin/fyx-gcc sdk/examples/c11-demo.c -o build/my-demo.elf
 
 # 3. 全链路实跑（从 BIOS 第一条指令开始）
 .venv/bin/python tools/fyxemu.py --image build/fyxos.img \
@@ -41,6 +44,11 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
     --keys "help;uname;mem;ps;test;desktop;desktop next;desktop theme;ifconfig;ping;sleep 120;shutdown" \
     --keys-after "[init] 全部通过"
 ```
+
+进入 Shell 后执行 `run /bin/gcc-c11-demo`，应看到 `GCC_C11_OK` 和退出码 42。
+这个程序由配套 SDK 的开源 GCC 编译，使用指针、数组、结构体、枚举、函数指针
+和 `_Static_assert`，不是内置 fyxcc 的子集产物。SDK 当前在宿主编译 FYXOS ELF；
+不把宿主 GCC 描述为已经在 guest 内运行。
 
 也可以单独跑内核（跳过引导，用于快速迭代）：
 
@@ -70,8 +78,9 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
+| 开源 GCC C11 SDK | `sdk/`、`tools/mksdk.py` | 宿主 GCC 完整 C11 前端、CRT/链接脚本、最小运行库、SDK 压缩包与预装 ring3 示例 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、算术/位/逻辑/?: 运算、复合赋值、while/do/for；直接生成静态 x86_64 ET_EXEC |
-| FyxJS 子集工具链 | `kernel/toolchain/fyxjs.c` | `function main`、let、严格比较、console.log/process.exit；共用原生后端生成 ELF |
+| FyxJS 子集工具链 | `kernel/toolchain/fyxjs.c` | 多个静态整数 function、参数/递归、let、严格比较、console.log；共用原生后端生成 ELF |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
 | FYXGit v1 | `kernel/git/fyxgit.c` | 原子仓库数据库、暂存/提交父链、状态、文本 diff、restore；不是 Git SHA-1/pack 兼容实现 |
 | FYXFS | `kernel/fs/fyxfs.c` | 4KiB CoW 块、双超级块、CRC32、目录/extents、快照 |
@@ -87,7 +96,8 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 11 + Git/CLI 4 + 图形 3 + 存储 5
+make test           # full/quick 各 25 + SDK 1 + 网络 6 + 工具链/IDE 11 + Git/CLI 4 + 图形 3 + 存储 5
+make test-sdk      # GCC 独立编译、ELF64 W^X、预装示例 ring3 运行
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS、循环/运算符、诊断与 Studio/PNG 闭环
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -132,7 +142,8 @@ boot/            引导器（stage1 MBR / stage2 16→32→64 位）
 include/fyxos/   内核头文件（ABI、boot_info、sched、syscall…）
 kernel/          内核（arch/x86_64 · core · drivers · gfx · lib · mm · net · sched · shell · sys · tests）
 user/            用户态最小 libc、_start、init 验收程序与链接脚本
-tools/           构建与测试台
+sdk/             开源 GCC C11 SDK 包装、freestanding 运行库与完整语言示例
+tools/           构建、SDK 打包与测试台
 docs/            规格与远景设计
 ```
 

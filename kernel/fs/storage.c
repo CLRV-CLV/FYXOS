@@ -75,6 +75,20 @@ static int install_initial_files(void)
                 (unsigned)size);
     }
 
+    if (vfs_stat("/bin/gcc-c11-demo", &st) != FYX_OK) {
+        size_t size = (size_t)(g_gcc_demo_image_end - g_gcc_demo_image_start);
+        if (!size)
+            return -FYX_EINVAL;
+        int rc = vfs_write_file("/bin/gcc-c11-demo",
+                                g_gcc_demo_image_start, size);
+        if (rc != 0) {
+            kprintf("[storage] 安装 GCC C11 示例失败：%d\n", rc);
+            return rc;
+        }
+        kprintf("[storage] 已把 GCC C11 示例安装到 /bin/gcc-c11-demo（%u 字节）\n",
+                (unsigned)size);
+    }
+
     const char motd[] = "FYXOS：数据与快照均由 FYXFS CoW 事务保护。\n";
     if (vfs_stat("/etc/motd", &st) != FYX_OK) {
         int rc = vfs_write_file("/etc/motd", motd, sizeof(motd) - 1);

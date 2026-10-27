@@ -5,6 +5,7 @@
 #    make            -> build/fyxos.img（可引导磁盘镜像）
 #    make kernel     -> build/fyxos.elf（ELF64 内核）
 #    make boot       -> build/stage1.bin + build/stage2.bin
+#    make sdk        -> build/fyxos-sdk/ + build/fyxos-sdk.tar.gz + GCC 示例 ELF
 #    make emu        -> 在 Unicorn 台架上真实启动（BIOS 实模式全链路）
 #    make emu-quick  -> 跳过引导扇区，直接把内核载入 64 位引擎启动
 #    make test       -> 跑全部自动化测试
@@ -57,6 +58,15 @@ USER_OBJS  := $(patsubst %.c,$(BUILD)/%.o,$(USER_C_SRC)) \
               $(patsubst %.S,$(BUILD)/%.o,$(USER_S_SRC))
 USER_ELF   := $(BUILD)/user/init.elf
 
+# ---- 开源 GCC C11 SDK 与预装的独立示例程序 --------------------------------
+SDK_DIR       := $(BUILD)/fyxos-sdk
+SDK_ARCHIVE   := $(BUILD)/fyxos-sdk.tar.gz
+SDK_STAMP     := $(SDK_DIR)/.stamp
+SDK_DEMO_ELF  := $(BUILD)/sdk/c11-demo.elf
+SDK_HELLO_ELF := $(BUILD)/sdk/hello.elf
+SDK_INPUTS    := $(shell find sdk -type f) tools/mksdk.py \
+                 user/start.S user/user.ld user/fyx.h
+
 # ---- stage2 的 32 位 C 部分（freestanding） --------------------------------
 SCFLAGS := -std=gnu11 -ffreestanding -fno-pie -fno-stack-protector \
            -fno-builtin -fno-common -fno-asynchronous-unwind-tables \
@@ -81,14 +91,14 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user image emu emu-quick test test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
+.PHONY: all kernel boot user sdk image emu emu-quick test test-sdk test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
 all: image
 
 # ---------------------------------------------------------------- 内核 ELF
-$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF)
+$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF)
 	@mkdir -p $(dir $@)
 	$(LD) $(KLDFLAGS) -T kernel/linker.ld -o $@ $(KERNEL_OBJS)
 	@echo "  LD      $@"
@@ -123,9 +133,20 @@ $(BUILD)/user/%.o: user/%.S
 	$(CC) $(UCFLAGS) -c -o $@ $<
 	@echo "  AS      $<"
 
+# SDK 由开源 GCC 构建；c11-demo.elf 是随系统预装的独立 ring3 程序。
+sdk: $(SDK_ARCHIVE) $(SDK_DEMO_ELF) $(SDK_HELLO_ELF)
+
+$(SDK_STAMP): $(SDK_INPUTS)
+	$(PY) tools/mksdk.py --output $(SDK_DIR) --archive $(SDK_ARCHIVE) \
+	                     --demo $(SDK_DEMO_ELF) --hello $(SDK_HELLO_ELF)
+	@touch $@
+
+$(SDK_ARCHIVE) $(SDK_DEMO_ELF) $(SDK_HELLO_ELF): $(SDK_STAMP)
+	@test -f $@
+
 # init_image.S 用 .incbin 内嵌用户 ELF，必须显式声明这个依赖；
 # 否则用户程序更新后只会重链内核，旧 blob 仍留在 init_image.o 里。
-$(BUILD)/kernel/sys/init_image.o: $(USER_ELF)
+$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF)
 
 # ------------------------------------------------------------------ 引导器
 boot: $(BUILD)/stage1.bin $(BUILD)/stage2.bin
@@ -179,12 +200,16 @@ emu-quick: $(KERNEL_ELF)
 test: image
 	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/full-desktop.png --test --max-seconds 90
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/quick-desktop.png --test --max-seconds 90
+	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
 	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)
 	$(PY) tools/test_toolchain.py --kernel $(KERNEL_ELF)
 	$(PY) tools/test_git.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_cli.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-sdk: image $(SDK_ARCHIVE)
+	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
 
 test-network: image
 	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)

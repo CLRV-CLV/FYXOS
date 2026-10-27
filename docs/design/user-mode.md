@@ -28,9 +28,12 @@
   `VMM_USER`、写权限和 NX，遵循 W^X。
 - `process_load_elf()` 按 SysV AMD64 ABI 布置 `argc/argv/envp/auxv`；只有程序
   头表确实被映射时才写 `AT_PHDR`，否则使用精简 auxv。
-- init 的安装种子仍用 `.incbin` 随内核携带，但只用于首启写入 `/bin/init`；
-  `process_start_init()` 和 `exec` 已统一通过 VFS 读取文件，不再直接执行内嵌
-  blob，也没有另写一套 ELF 解析器。
+- init 与 GCC C11 示例的安装种子仍用 `.incbin` 随内核携带，但只用于首启写入
+  `/bin/init` 和 `/bin/gcc-c11-demo`；`process_start_init()`、`run` 和 `exec`
+  已统一通过 VFS 读取文件，不直接执行内嵌 blob，也没有另写一套 ELF 解析器。
+- `/bin/gcc-c11-demo` 由 `build/fyxos-sdk/bin/fyx-gcc` 使用开源 GCC 独立编译，
+  具有自己的 PT_LOAD、只读数据和 SysV `_start`；其指针/数组/结构体/函数指针
+  路径已在 ring3 运行并返回 42，验证装载器不依赖内置 fyxcc 的 ELF 布局。
 
 ## 3. 系统调用与调度不变式
 

@@ -116,6 +116,8 @@ long sys_brk(u64 new_brk);
 /* 内嵌用户程序镜像（tools/mkimage 之外，由 .incbin 随内核提供） */
 extern const u8 g_init_image_start[];
 extern const u8 g_init_image_end[];
+extern const u8 g_gcc_demo_image_start[];
+extern const u8 g_gcc_demo_image_end[];
 
 void process_start_init(void);   /* 由 kmain 调用：装载并运行第一个用户进程 */
 
