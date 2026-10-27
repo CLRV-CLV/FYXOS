@@ -284,13 +284,50 @@ def main():
                             ("a", "无参 helper 与 syscall 返回")):
             expect(out, f"[run] /home/user/{name}.elf 退出码=42", label)
         expect(out, "FN_OK", "helper 内 puts")
-        expect(out, "unknown function (define it before use)",
-               "未定义前向调用诊断")
+        expect(out, "unknown function (prototype or definition required)",
+               "未声明函数调用诊断")
         expect(out, "function argument count mismatch", "参数个数诊断")
         print("  [PASS] C 自定义函数、栈传参、嵌套/递归调用与入口/返回诊断")
     except Exception as error:
         failures += 1
         print(f"  [FAIL] C 函数调用：{error}")
+
+    try:
+        keys = (
+            "ifconfig;ping;"
+            "write /home/user/f.c int later(int)\\;int later(int x)\\;"
+            "int main(){return later(42)\\;}int later(int x){return x\\;};"
+            "fyxcc /home/user/f.c /home/user/f.elf;run /home/user/f.elf;"
+            "write /home/user/m.c int o(int n)\\;int e(int n){if(!n)return 1\\;"
+            "return o(n-1)\\;}int o(int n){if(!n)return 0\\;return e(n-1)\\;}"
+            "int main(){return e(6)&&o(5)?42:1\\;};"
+            "fyxcc /home/user/m.c /home/user/m.elf;run /home/user/m.elf;"
+            "write /home/user/undef.c int missing(int)\\;int main(){return missing(1)\\;};"
+            "fyxcc /home/user/undef.c /home/user/undef.elf;"
+            "write /home/user/conflict.c int f(int x)\\;int f(int x,int y){return x+y\\;}"
+            "int main(){return 0\\;};"
+            "fyxcc /home/user/conflict.c /home/user/conflict.elf;"
+            "write /home/user/dupe.c int f(void){return 1\\;}int f(void){return 2\\;}"
+            "int main(){return 0\\;};"
+            "fyxcc /home/user/dupe.c /home/user/dupe.elf;"
+            "write /home/user/noname.c int f(int){return 1\\;}int main(){return 0\\;};"
+            "fyxcc /home/user/noname.c /home/user/noname.elf;shutdown"
+        )
+        out, _ = run_case("prototypes", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/f.elf 退出码=42",
+               "重复原型与前向 rel32 修补")
+        expect(out, "[run] /home/user/m.elf 退出码=42",
+               "even/odd 相互递归")
+        expect(out, "undefined function", "只有原型的调用诊断")
+        expect(out, "conflicting function declaration", "签名冲突诊断")
+        expect(out, "duplicate function definition", "重复定义诊断")
+        expect(out, "parameter name required in function definition",
+               "定义缺少参数名诊断")
+        print("  [PASS] C 函数原型、前向调用、相互递归与声明/定义诊断")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 函数原型：{error}")
 
     try:
         keys = (

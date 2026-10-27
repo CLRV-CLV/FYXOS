@@ -23,6 +23,7 @@
 #define CC_MAX_CASES   64u
 #define CC_MAX_FUNCS   16u
 #define CC_MAX_PARAMS  4u
+#define CC_MAX_CALLS   128u
 #define CC_FRAME_SIZE  ((CC_MAX_VARS + CC_MAX_DEPTH) * 8u)
 #define CC_CONTROL_LOOP   1u
 #define CC_CONTROL_SWITCH 2u
@@ -45,6 +46,14 @@ struct cc_function {
     char name[CC_VAR_NAME];
     size_t address;
     u32 param_count;
+    bool defined;
+};
+
+struct cc_call_fixup {
+    size_t disp_pos;
+    size_t next_ip;
+    size_t source_offset;
+    u32 function_index;
 };
 
 struct cc_control {
@@ -77,6 +86,8 @@ struct cc_parser {
     u32 var_count;
     struct cc_function functions[CC_MAX_FUNCS];
     u32 function_count;
+    struct cc_call_fixup calls[CC_MAX_CALLS];
+    u32 call_count;
     bool current_is_main;
     u32 depth;
     struct cc_control controls[CC_MAX_DEPTH];
@@ -298,17 +309,39 @@ static void cc_emit_imm_rcx(struct cc_parser *p, i64 value)
     cc_emit32(p, (u32)(i32)value);
 }
 
-static void cc_emit_call(struct cc_parser *p, const struct cc_function *fn)
+static void cc_emit_call(struct cc_parser *p, struct cc_function *fn)
 {
-    cc_emit8(p, 0xE8);                         /* call rel32 */
-    size_t disp_pos = p->code_pos;
-    cc_emit32(p, 0);
-    i64 displacement = (i64)fn->address - (i64)p->code_pos;
-    if (displacement < -0x80000000ll || displacement > 0x7FFFFFFFll) {
-        cc_fail(p, "call displacement out of range");
+    if (p->call_count >= CC_MAX_CALLS) {
+        cc_fail(p, "too many function call sites");
         return;
     }
-    cc_patch32(p, disp_pos, (u32)(i32)displacement);
+    struct cc_call_fixup *call = &p->calls[p->call_count++];
+    call->source_offset = p->pos;
+    call->function_index = (u32)(fn - p->functions);
+    cc_emit8(p, 0xE8);                         /* call rel32，尾部统一回填 */
+    call->disp_pos = p->code_pos;
+    cc_emit32(p, 0);
+    call->next_ip = p->code_pos;
+}
+
+static bool cc_resolve_calls(struct cc_parser *p)
+{
+    for (u32 i = 0; i < p->call_count; i++) {
+        struct cc_call_fixup *call = &p->calls[i];
+        struct cc_function *fn = &p->functions[call->function_index];
+        if (!fn->defined) {
+            p->pos = call->source_offset;
+            cc_fail(p, "undefined function");
+            return false;
+        }
+        i64 displacement = (i64)fn->address - (i64)call->next_ip;
+        if (displacement < -0x80000000ll || displacement > 0x7FFFFFFFll) {
+            cc_fail(p, "call displacement out of range");
+            return false;
+        }
+        cc_patch32(p, call->disp_pos, (u32)(i32)displacement);
+    }
+    return !p->error;
 }
 
 static void cc_emit_discard_args(struct cc_parser *p, u32 count)
@@ -367,22 +400,35 @@ static struct cc_function *cc_find_function(struct cc_parser *p,
     return NULL;
 }
 
-static struct cc_function *cc_add_function(struct cc_parser *p,
-                                            const char *name, u32 param_count)
+static struct cc_function *cc_declare_function(struct cc_parser *p,
+                                                const char *name,
+                                                u32 param_count,
+                                                bool definition)
 {
-    if (cc_find_function(p, name)) {
-        cc_fail(p, "duplicate function");
-        return NULL;
+    struct cc_function *fn = cc_find_function(p, name);
+    if (fn) {
+        if (fn->param_count != param_count) {
+            cc_fail(p, "conflicting function declaration");
+            return NULL;
+        }
+        if (definition && fn->defined) {
+            cc_fail(p, "duplicate function definition");
+            return NULL;
+        }
+    } else {
+        if (p->function_count >= CC_MAX_FUNCS) {
+            cc_fail(p, "too many functions");
+            return NULL;
+        }
+        fn = &p->functions[p->function_count++];
+        memset(fn, 0, sizeof(*fn));
+        strncpy(fn->name, name, sizeof(fn->name) - 1);
+        fn->param_count = param_count;
     }
-    if (p->function_count >= CC_MAX_FUNCS) {
-        cc_fail(p, "too many functions");
-        return NULL;
+    if (definition) {
+        fn->address = p->code_pos;
+        fn->defined = true;                    /* 自身递归立即可见 */
     }
-    struct cc_function *fn = &p->functions[p->function_count++];
-    memset(fn, 0, sizeof(*fn));
-    strncpy(fn->name, name, sizeof(fn->name) - 1);
-    fn->address = p->code_pos;
-    fn->param_count = param_count;
     return fn;
 }
 
@@ -645,7 +691,7 @@ static bool cc_parse_primary(struct cc_parser *p)
         if (cc_consume(p, '(')) {
             struct cc_function *fn = cc_find_function(p, name);
             if (!fn) {
-                cc_fail(p, "unknown function (define it before use)");
+                cc_fail(p, "unknown function (prototype or definition required)");
                 return false;
             }
             u32 arg_count = 0;
@@ -1434,6 +1480,7 @@ static bool cc_parse_function(struct cc_parser *p, bool *saw_main,
         return false;
 
     char param_names[CC_MAX_PARAMS][CC_VAR_NAME];
+    bool param_named[CC_MAX_PARAMS];
     u32 param_count = 0;
     if (cc_word(p, "void")) {
         if (!cc_expect(p, ')'))
@@ -1444,11 +1491,12 @@ static bool cc_parse_function(struct cc_parser *p, bool *saw_main,
                 cc_fail(p, "too many function parameters");
                 return false;
             }
-            if (!cc_expect_word(p, "int") ||
-                !cc_identifier(p, param_names[param_count])) {
-                cc_fail(p, "expected int parameter");
+            if (!cc_expect_word(p, "int"))
                 return false;
-            }
+            param_named[param_count] =
+                cc_identifier(p, param_names[param_count]);
+            if (!param_named[param_count])
+                param_names[param_count][0] = '\0'; /* 原型允许 int f(int, int) */
             param_count++;
             if (cc_consume(p, ')'))
                 break;
@@ -1462,13 +1510,26 @@ static bool cc_parse_function(struct cc_parser *p, bool *saw_main,
         cc_fail(p, "main parameters are not supported");
         return false;
     }
+    bool prototype = cc_consume(p, ';');
+    if (!prototype) {
+        for (u32 i = 0; i < param_count; i++) {
+            if (!param_named[i]) {
+                cc_fail(p, "parameter name required in function definition");
+                return false;
+            }
+        }
+    }
+    struct cc_function *fn =
+        cc_declare_function(p, name, param_count, !prototype);
+    if (!fn)
+        return false;
+    if (prototype)
+        return !p->error;
+
     p->var_count = 0;
     p->depth = 0;
     p->control_depth = 0;
     p->current_is_main = is_main;
-    struct cc_function *fn = cc_add_function(p, name, param_count);
-    if (!fn)
-        return false;
     cc_emit_prologue(p);
 
     for (u32 i = 0; i < param_count; i++) {
@@ -1505,6 +1566,8 @@ static bool cc_parse_program(struct cc_parser *p)
         cc_fail(p, "missing main function");
         return false;
     }
+    if (!cc_resolve_calls(p))
+        return false;
     cc_patch_jump(p, entry_jump, main_address);
     return !p->error;
 }
