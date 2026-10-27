@@ -70,6 +70,9 @@ enum fyx_syscall {
 void syscall_init(void);
 void syscall_set_kernel_stack(u64 stack_top);
 long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5, u64 a6);
+long linux_syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3,
+                            u64 a4, u64 a5, u64 a6);
+u64  linux_syscall_unknown_count(void);
 
 /* 供内核代码直接调用的实现（避免绕一圈 syscall 指令） */
 long sys_log_write(const char *buf, size_t len);

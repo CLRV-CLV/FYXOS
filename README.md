@@ -20,6 +20,11 @@
 1080p24、H.264＋立体声 AAC、原创画面与合成配乐；可修改的 Remotion 工程和
 复现命令见 [`video/README.md`](video/README.md)。
 
+当前分支另新增可实跑的 **静态 Linux x86_64＋标准未压缩 amd64 DEB** 纵切片：
+guest 内 `deb` 解包安装、`run linux` 执行包内未修改 glibc ELF、两行输出与
+退出码 23 均已验收；干净全量为 **89 PASS / 0 FAIL**。这不是任意 EXE/DEB
+或动态 Linux 兼容声明，精确边界见 [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md)。
+
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
 
@@ -58,7 +63,16 @@ make app-image APP=build/my-demo.elf
 进入 Shell 后执行 `run /bin/gcc-c11-demo`，应看到 `GCC_C11_OK` 和退出码 42。
 这个程序由配套 SDK 的开源 GCC 编译，使用指针、数组、结构体、枚举、函数指针
 和 `_Static_assert`，不是内置 fyxcc 的子集产物。SDK 当前在宿主编译 FYXOS ELF；
-不把宿主 GCC 描述为已经在 guest 内运行。
+不把宿主 GCC 描述为已经在 guest 内运行。构建兼容验收包还需要宿主的
+静态 glibc 开发文件与 `dpkg-deb`；它们只是构建工具，不是 guest 内 GCC/dpkg。
+
+Linux/DEB 纵切片可在 Shell 直接复现：
+
+```text
+deb /packages/fyx-deb-demo.deb
+run linux /usr/bin/fyx-deb-demo
+# 应输出 LINUX_GLIBC_OK、DEB_PACKAGE_OK，随后报告退出码 23
+```
 
 也可以单独跑内核（跳过引导，用于快速迭代）：
 
@@ -89,6 +103,8 @@ make app-image APP=build/my-demo.elf
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 开源 GCC C11 SDK | `sdk/`、`tools/mksdk.py` | 宿主 GCC 完整 C11 前端、CRT/链接脚本、最小运行库、SDK 压缩包与预装 ring3 示例 |
+| Linux x86_64 纵切片 | `kernel/sys/linux_syscall.c`、`elf_load.c` | 静态 ET_EXEC、独立 syscall 编号/errno、auxv、FS/TLS、brk/mmap、SSE2 上下文与单调时钟 |
+| DEB 安装纵切片 | `kernel/fs/deb.c`、`compat/deb-demo/` | ar＋未压缩 ustar、amd64 control 校验、目录/普通文件解包；拒绝依赖、脚本、链接和压缩输入 |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、算术/位/逻辑/?: 运算、复合赋值、while/do/for；直接生成静态 x86_64 ET_EXEC |
 | FyxJS 子集工具链 | `kernel/toolchain/fyxjs.c` | 多个静态整数 function、参数/递归、let、严格比较、console.log；共用原生后端生成 ELF |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
@@ -98,7 +114,7 @@ make app-image APP=build/my-demo.elf
 | 系统还原 | `kernel/fs/fyxfs.c` | O(1) 快照、事务式回滚，默认保留 `/home` |
 | 用户程序 | `user/` | 静态 ELF64、最小 libc 封装与文件/进程验收 init |
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
-| 内核 Shell | `kernel/shell/shell.c` | 65 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、git、resolve/ifconfig/ping 与跨系统子集别名 |
+| 内核 Shell | `kernel/shell/shell.c` | 66 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、deb、git、resolve/ifconfig/ping 与跨系统子集别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
 | 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
@@ -106,8 +122,9 @@ make app-image APP=build/my-demo.elf
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 25 + SDK 1 + 网络 6 + 工具链/IDE 11 + Git/CLI 4 + 图形 3 + 存储 5
+make test           # 89 项：原 80 项 + Linux/DEB 兼容 9 项
 make test-sdk      # GCC 独立编译、ELF64 W^X、预装示例 ring3 运行
+make test-compat   # DEB 宿主/来客一致、安装/run linux/退出码/原 ABI 回归
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS、循环/运算符、诊断与 Studio/PNG 闭环
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -135,6 +152,14 @@ make test-storage   # 只重跑存储集成测试
 FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B 槽与独立救援
 环境仍未完成。
 
+**兼容边界：当前不能运行任意 EXE 或 DEB。** Windows PE/Win32 尚未实现；
+Linux 仅验收固定地址、静态、单线程 x86_64 ET_EXEC，不含 PT_INTERP 动态
+链接、PIE、完整 pthread/signal 或 Linux 全量 syscall。DEB 仅接受未压缩
+`control.tar`/`data.tar`、amd64、无依赖/maintainer scripts 的普通文件和目录；
+gzip/xz/zstd、apt 仓库、依赖求解与完整 dpkg 数据库未完成。glibc 的 `rseq`
+探测与无可靠熵源时的 `getrandom` 会明确记录 `ENOSYS`；不会用假随机数冒充
+安全实现。包内示例的成功不能外推为真实 Debian 生态已兼容。
+
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
 最小封装。网络支持 RTL8139 轮询、IPv4、DHCP、ICMP、UDP checksum、DNS A（一次
@@ -153,6 +178,7 @@ include/fyxos/   内核头文件（ABI、boot_info、sched、syscall…）
 kernel/          内核（arch/x86_64 · core · drivers · gfx · lib · mm · net · sched · shell · sys · tests）
 user/            用户态最小 libc、_start、init 验收程序与链接脚本
 sdk/             开源 GCC C11 SDK 包装、freestanding 运行库与完整语言示例
+compat/          静态 glibc/Linux 与标准 DEB 验收载荷源码、control
 tools/           构建、SDK 打包与测试台
 docs/            规格与远景设计
 ```
@@ -181,6 +207,7 @@ docs/            规格与远景设计
 - [`docs/design/ide.md`](docs/design/ide.md) — FYX IDE
 - [`docs/design/system-restore.md`](docs/design/system-restore.md) — 系统还原
 - [`docs/design/user-mode.md`](docs/design/user-mode.md) — 阶段 G 用户态实现与验证边界
+- [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md) — 静态 Linux x86_64 与未压缩 amd64 DEB 的实现、验收和边界
 - [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现
 - [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP/TCP/DNS、异常报文与实跑验收边界
 - [`docs/design/graphics.md`](docs/design/graphics.md) — BGA、软件光栅、桌面交互与帧校验边界

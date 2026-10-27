@@ -325,6 +325,63 @@ int vmm_map_in(struct address_space *as, u64 virt, phys_addr_t phys,
     return r;
 }
 
+int vmm_unmap_in(struct address_space *as, u64 virt, size_t size)
+{
+    if (!as || !as->pml4 || size == 0)
+        return -FYX_EINVAL;
+    spin_lock(&g_vmm_lock);
+    u64 *pml4 = (u64 *)phys_to_virt(as->pml4);
+    for (size_t off = 0; off < size; off += PAGE_SIZE) {
+        u64 v = ALIGN_DOWN(virt + off, PAGE_SIZE);
+        if (!(pml4[INDEX(v, 39)] & PTE_PRESENT))
+            continue;
+        u64 *pdpt = table_virt(pml4[INDEX(v, 39)]);
+        if (!(pdpt[INDEX(v, 30)] & PTE_PRESENT))
+            continue;
+        u64 *pd = table_virt(pdpt[INDEX(v, 30)]);
+        if (!(pd[INDEX(v, 21)] & PTE_PRESENT) || (pd[INDEX(v, 21)] & PTE_PS))
+            continue;
+        u64 *pt = table_virt(pd[INDEX(v, 21)]);
+        u64 entry = pt[INDEX(v, 12)];
+        if (entry & PTE_PRESENT) {
+            pt[INDEX(v, 12)] = 0;
+            pmm_free_frame(entry & PTE_ADDR_MASK);
+            invlpg((void *)v);
+        }
+    }
+    g_unmap_calls++;
+    spin_unlock(&g_vmm_lock);
+    return 0;
+}
+
+int vmm_protect_in(struct address_space *as, u64 virt, size_t size, u32 flags)
+{
+    if (!as || !as->pml4 || size == 0)
+        return -FYX_EINVAL;
+    spin_lock(&g_vmm_lock);
+    u64 *pml4 = (u64 *)phys_to_virt(as->pml4);
+    u64 want = translate_flags(flags);
+    for (size_t off = 0; off < size; off += PAGE_SIZE) {
+        u64 v = ALIGN_DOWN(virt + off, PAGE_SIZE);
+        if (!(pml4[INDEX(v, 39)] & PTE_PRESENT))
+            continue;
+        u64 *pdpt = table_virt(pml4[INDEX(v, 39)]);
+        if (!(pdpt[INDEX(v, 30)] & PTE_PRESENT))
+            continue;
+        u64 *pd = table_virt(pdpt[INDEX(v, 30)]);
+        if (!(pd[INDEX(v, 21)] & PTE_PRESENT) || (pd[INDEX(v, 21)] & PTE_PS))
+            continue;
+        u64 *pt = table_virt(pd[INDEX(v, 21)]);
+        u64 index = INDEX(v, 12);
+        if (pt[index] & PTE_PRESENT) {
+            pt[index] = (pt[index] & PTE_ADDR_MASK) | want;
+            invlpg((void *)v);
+        }
+    }
+    spin_unlock(&g_vmm_lock);
+    return 0;
+}
+
 /* 回收用户空间（PML4 的 0..255 项）里的全部页框，包括数据页与各级页表 */
 void vmm_destroy_address_space(struct address_space *as)
 {

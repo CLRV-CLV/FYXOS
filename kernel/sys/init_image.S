@@ -23,4 +23,13 @@ g_gcc_demo_image_start:
     .align 8
 g_gcc_demo_image_end:
 
+    /* 标准 ar + 未压缩 tar 的 amd64 DEB；启动时作为普通包文件安装到 FYXFS。 */
+    .align 16
+    .globl g_deb_demo_image_start
+    .globl g_deb_demo_image_end
+g_deb_demo_image_start:
+    .incbin "build/compat/fyx-deb-demo.deb"
+    .align 8
+g_deb_demo_image_end:
+
 .section .note.GNU-stack,"",@progbits

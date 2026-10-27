@@ -14,6 +14,7 @@
 #include <fyxos/mm.h>
 #include <fyxos/lib.h>
 #include <fyxos/kernel.h>
+#include <fyxos/x86_64.h>
 
 /* 用户栈顶布置（SysV AMD64 ABI §3.4.1），从低地址往高地址看：
  *
@@ -37,9 +38,19 @@
 #define AT_PHNUM  5
 #define AT_PAGESZ 6
 #define AT_ENTRY  9
+#define AT_HWCAP  16
+#define AT_CLKTCK 17
+#define AT_UID    11
+#define AT_EUID   12
+#define AT_GID    13
+#define AT_EGID   14
+#define AT_SECURE 23
+#define AT_RANDOM 25
+#define AT_EXECFN 31
 
 #define AUXV_WITH_PHDR 6       /* PAGESZ/PHDR/PHENT/PHNUM/ENTRY/NULL */
 #define AUXV_MINIMAL   3       /* PAGESZ/ENTRY/NULL */
+#define AUXV_LINUX_MAX 15      /* 上述项 + Linux 身份/随机数/执行路径 */
 
 static int validate_ehdr(const struct elf64_ehdr *eh, size_t size)
 {
@@ -86,12 +97,24 @@ int process_load_elf(struct process *p, const void *image, size_t size,
     if (rc != 0)
         return rc;
 
+    /* GCC/binutils 的 Linux 静态程序通常带 ELFOSABI_GNU。System-V OSABI=0
+     * 在两种系统间都可能出现，只有显式 run linux 才选择 Linux ABI。 */
+    if (p->abi == PROC_ABI_FYXOS && eh->e_ident[7] == ELFOSABI_GNU)
+        p->abi = PROC_ABI_LINUX;
+
     const struct elf64_phdr *ph =
         (const struct elf64_phdr *)((const u8 *)image + eh->e_phoff);
 
     u64 max_addr = 0;
     u64 phdr_addr = 0;
     u64 phdr_bytes = (u64)eh->e_phnum * eh->e_phentsize;
+
+    for (u16 i = 0; i < eh->e_phnum; i++) {
+        if (ph[i].p_type == PT_INTERP) {
+            kprintf("[elf] 拒绝动态 ELF：PT_INTERP/动态链接器尚未实现\n");
+            return -FYX_ENOSYS;
+        }
+    }
 
     /* ---------------- 1. 装载 PT_LOAD ---------------- */
     for (u16 i = 0; i < eh->e_phnum; i++) {
@@ -104,6 +127,9 @@ int process_load_elf(struct process *p, const void *image, size_t size,
             ph[i].p_filesz > size - ph[i].p_offset)
             return -FYX_EINVAL;
 
+        if (ph[i].p_vaddr >= USER_AREA_LIMIT ||
+            ph[i].p_memsz > USER_AREA_LIMIT - ph[i].p_vaddr)
+            return -FYX_EINVAL;
         u64 vstart = ALIGN_DOWN(ph[i].p_vaddr, PAGE_SIZE);
         u64 vend   = ALIGN_UP(ph[i].p_vaddr + ph[i].p_memsz, PAGE_SIZE);
 
@@ -159,9 +185,12 @@ int process_load_elf(struct process *p, const void *image, size_t size,
         return -FYX_EINVAL;
 
     p->entry = eh->e_entry;
-    p->brk   = ALIGN_UP(max_addr, PAGE_SIZE);
-    if (p->brk < USER_HEAP_BASE)
+    p->brk = ALIGN_UP(max_addr, PAGE_SIZE);
+    if (p->abi == PROC_ABI_FYXOS && p->brk < USER_HEAP_BASE)
         p->brk = USER_HEAP_BASE;
+    p->brk_base = p->brk;
+    p->brk_mapped = p->brk;
+    p->mmap_next = USER_MMAP_BASE;
 
     /* ---------------- 2. 用户栈 ---------------- */
     u64 stack_base = USER_STACK_TOP - USER_STACK_SIZE;
@@ -190,19 +219,24 @@ int process_load_elf(struct process *p, const void *image, size_t size,
         cur -= strlen(argv[i]) + 1;
         arg_ptrs[i] = cur;
     }
+    u64 random_addr = 0;
+    if (p->abi == PROC_ABI_LINUX) {
+        cur -= 16;
+        random_addr = cur;
+    }
     cur = ALIGN_DOWN(cur, 16);
 
-    int auxv_pairs = phdr_addr ? AUXV_WITH_PHDR : AUXV_MINIMAL;
-    cur -= (u64)auxv_pairs * 16;              /* auxv 是 8 字节的键值对 */
-    u64 auxv_base = cur;
+    int auxv_pairs = p->abi == PROC_ABI_LINUX ? AUXV_LINUX_MAX :
+        (phdr_addr ? AUXV_WITH_PHDR : AUXV_MINIMAL);
 
-    cur -= 8;                                 /* argv[] */
-    cur -= (u64)argc * 8;
-    cur -= 8;                                 /* envp[] */
-    cur -= (u64)envc * 8;
-    cur -= 8;                                 /* argc */
-    cur = ALIGN_DOWN(cur, 16);                /* ABI 要求入口时栈 16 字节对齐 */
+    /* argc/argv/envp/auxv 必须无空洞连续。对齐 padding 只能放在 argc 之前，
+     * 否则 glibc 会把 envp NULL 后的空洞误认为 AT_NULL，丢失 AT_RANDOM。 */
+    u64 vector_bytes = 8 + ((u64)argc + 1) * 8 + ((u64)envc + 1) * 8 +
+                       (u64)auxv_pairs * 16;
+    cur = ALIGN_DOWN(cur - vector_bytes, 16);
     u64 sp_final = cur;
+    u64 auxv_base = sp_final + 8 + ((u64)argc + 1) * 8 +
+                    ((u64)envc + 1) * 8;
 
     /* ---------------- 5. 切到进程页表把内容写进去 ---------------- */
     phys_addr_t saved_cr3 = vmm_current_pml4();
@@ -213,18 +247,39 @@ int process_load_elf(struct process *p, const void *image, size_t size,
     for (int i = 0; i < argc; i++)
         memcpy((void *)arg_ptrs[i], argv[i], strlen(argv[i]) + 1);
 
-    u64 *av = (u64 *)auxv_base;
-    av[0] = AT_PAGESZ; av[1] = PAGE_SIZE;
-    if (phdr_addr) {
-        av[2]  = AT_PHDR;   av[3]  = phdr_addr;
-        av[4]  = AT_PHENT;  av[5]  = sizeof(struct elf64_phdr);
-        av[6]  = AT_PHNUM;  av[7]  = eh->e_phnum;
-        av[8]  = AT_ENTRY;  av[9]  = eh->e_entry;
-        av[10] = AT_NULL;   av[11] = 0;
-    } else {
-        av[2] = AT_ENTRY;   av[3] = eh->e_entry;
-        av[4] = AT_NULL;    av[5] = 0;
+    if (random_addr) {
+        /* 仅用于早期 glibc stack guard；不是密码学随机数服务。 */
+        u64 seed = rdtsc() ^ ((u64)p->pid << 32) ^ eh->e_entry;
+        for (int i = 0; i < 16; i++) {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            ((u8 *)(uintptr_t)random_addr)[i] = (u8)seed;
+        }
     }
+
+    u64 *av = (u64 *)auxv_base;
+#define AUXV_PUT(key, value) do { av[0] = (key); av[1] = (value); av += 2; } while (0)
+    AUXV_PUT(AT_PAGESZ, PAGE_SIZE);
+    if (phdr_addr) {
+        AUXV_PUT(AT_PHDR, phdr_addr);
+        AUXV_PUT(AT_PHENT, eh->e_phentsize);
+        AUXV_PUT(AT_PHNUM, eh->e_phnum);
+    }
+    AUXV_PUT(AT_ENTRY, eh->e_entry);
+    if (p->abi == PROC_ABI_LINUX) {
+        AUXV_PUT(AT_HWCAP, 0);
+        AUXV_PUT(AT_CLKTCK, 100);
+        AUXV_PUT(AT_UID, 0);
+        AUXV_PUT(AT_EUID, 0);
+        AUXV_PUT(AT_GID, 0);
+        AUXV_PUT(AT_EGID, 0);
+        AUXV_PUT(AT_SECURE, 0);
+        AUXV_PUT(AT_RANDOM, random_addr);
+        AUXV_PUT(AT_EXECFN, argc ? arg_ptrs[0] : 0);
+    }
+    AUXV_PUT(AT_NULL, 0);
+#undef AUXV_PUT
 
     u64 *q = (u64 *)sp_final;
     *q++ = (u64)argc;
@@ -239,8 +294,9 @@ int process_load_elf(struct process *p, const void *image, size_t size,
 
     p->ustack_top = sp_final;
 
-    kprintf("[proc] 装载 %s：entry=0x%llx brk=0x%llx 栈顶=0x%llx argc=%d\n",
-            p->name, (unsigned long long)p->entry,
+    kprintf("[proc] 装载 %s ABI=%s：entry=0x%llx brk=0x%llx 栈顶=0x%llx argc=%d\n",
+            p->name, p->abi == PROC_ABI_LINUX ? "Linux-x86_64" : "FYXOS",
+            (unsigned long long)p->entry,
             (unsigned long long)p->brk,
             (unsigned long long)p->ustack_top, argc);
     return 0;

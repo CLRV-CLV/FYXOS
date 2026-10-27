@@ -17,7 +17,7 @@
 | A | 自研引导：MBR(stage1) → stage2 → 长模式 → 解析内核 ELF64 → 跳转 | ✅ 完成 |
 | B | 内核核心：GDT/IDT/中断 → PMM → VMM(四级页表) → 堆 → 抢占式调度 → 系统调用 | ✅ 完成 |
 | C | 驱动：串口 / 键盘 / PIT 时钟 / VGA 文本 | ✅ 完成 |
-| D | 内核 Shell（初版 16 条，现 65 条） | ✅ 完成 |
+| D | 内核 Shell（初版 16 条，现 66 条） | ✅ 完成 |
 | E | Unicorn 测试台：假 BIOS + 全链路实跑验证 | ✅ 完成 |
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
@@ -27,6 +27,7 @@
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
 | L | FYX IDE | 🟡 单文件 Studio 编辑/构建/运行完成；完整 IDE 待办 |
 | M | 系统还原 | ✅ 核心完成（CoW 快照/回滚/保留 `/home`） |
+| N | 应用兼容 | 🟡 静态 Linux x86_64＋未压缩 amd64 DEB 纵切片；PE/动态 ELF/完整生态待办 |
 
 验证方式（阶段 E 已建立，后续沿用）：
 
@@ -103,7 +104,7 @@ ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 
 和单个未确认数据段支持固定 20ms、最多三次发送，UDP 也会生成并校验伪首部
 checksum。DNS 在 UDP TC 后通过同一 TCP 客户端发送长度前缀查询并解析响应；
 UDP 无响应时以同一事务 ID 重传一次，8 项 A 记录缓存遵循 TTL 并规范化大小写
-和根点。当前共 38 个 syscall、65 条 Shell 命令。listen/server、自适应 RTO、
+和根点。当前共 38 个原生 syscall、66 条 Shell 命令，另有独立 Linux ABI 子集。listen/server、自适应 RTO、
 拥塞控制、乱序重组、IPv6、TLS、DNS AAAA/CNAME 递归/负缓存与 E1000/VirtIO-net 仍未实现，
 详见 [`docs/design/network.md`](design/network.md)。
 
@@ -178,6 +179,16 @@ Ctrl-Q 退出；`tools/test_toolchain.py` 验证从空文件到磁盘 ELF、ring
 保留，以及默认只恢复系统并保留当前 `/home`；`rollback ID all` 支持整卷恢复。
 A/B 内核槽、独立救援镜像、认证、自动保留策略及包管理器联动仍是后续目标。
 
+### 阶段 N — 应用兼容
+
+见 [`docs/design/linux-deb-compat.md`](design/linux-deb-compat.md)。
+
+**当前实现（已实跑通过）**：标准未压缩 amd64 DEB 在 guest 内解包安装，
+包内未修改的静态 glibc x86_64 程序输出两行并以 23 退出；Linux/FYX syscall
+分表，具备 auxv、FS/TLS、brk/匿名 mmap、SSE2 上下文与 PIT 单调时钟。
+Windows PE/Win32、PT_INTERP 动态 ELF、压缩 DEB、依赖/dpkg 数据库、完整
+Linux 线程/信号/POSIX 和任意 EXE/DEB 兼容均未完成。
+
 ---
 
 ## 2. 贯穿全局的硬指标
@@ -186,7 +197,7 @@ A/B 内核槽、独立救援镜像、认证、自动保留策略及包管理器�
 |---|---|---|
 | 冷启动 | ≤ 3 秒（NVMe） | 并行驱动探测、延迟初始化、内核镜像常驻压缩 |
 | 基础安装体积 | ≤ 2 GiB | 对比 Win10 的 20+ GiB；靠 CoW + 压缩 + 按需组件 |
-| 内核二进制 | ≤ 4 MiB | 当前存储版约 155 KiB（未压缩、含调试信息） |
+| 内核二进制 | ≤ 4 MiB | 当前兼容验收构建约 978 KiB（含内嵌 DEB；引导布局上限 1 MiB） |
 | 空闲内存占用 | ≤ 400 MiB | 桌面环境常驻 |
 | 输入延迟 | ≤ 1 帧（120Hz 下 ≤ 8.3 ms） | 合成器直写、输入线程优先级最高 |
 | 兼容性 | POSIX 完整 + Win32 常用子集 | 见 `docs/spec/fyx-cli.md` |

@@ -25,6 +25,23 @@ extern void isr_return_point(void);
 extern void thread_trampoline(void);
 void irq_context_switch(uintptr_t *prev_slot, uintptr_t next_rsp);
 
+static void thread_fpu_defaults(struct thread *t)
+{
+    /* FXSAVE 布局：FCW@0，MXCSR@24；其余已由线程槽清零。 */
+    *(u16 *)&t->fxstate[0] = 0x037f;
+    *(u32 *)&t->fxstate[24] = 0x1f80;
+}
+
+static void fpu_save(struct thread *t)
+{
+    __asm__ volatile("fxsave64 (%0)" :: "r"(t->fxstate) : "memory");
+}
+
+static void fpu_restore(struct thread *t)
+{
+    __asm__ volatile("fxrstor64 (%0)" :: "r"(t->fxstate) : "memory");
+}
+
 static struct thread   g_threads[MAX_THREADS];
 static struct list_head g_runqueue;
 static struct list_head g_all;
@@ -202,6 +219,7 @@ static struct thread *thread_create_internal(const char *name, thread_fn entry,
     }
 
     memset(t, 0, sizeof(*t));
+    thread_fpu_defaults(t);
     t->tid = g_next_tid++;
     strncpy(t->name, name ? name : "unnamed", THREAD_NAME_MAX - 1);
     t->priority = priority;
@@ -429,6 +447,11 @@ void sched_switch(void)
         vmm_switch(next->pml4 ? next->pml4 : vmm_kernel_pml4());
     gdt_set_kernel_stack((u64)next->stack_base);
     syscall_set_kernel_stack((u64)next->stack_base);
+    wrmsr(MSR_FS_BASE, next->fs_base);
+    if (g_cpu.has_sse2) {
+        fpu_save(prev);
+        fpu_restore(next);
+    }
 
     irq_context_switch((uintptr_t *)&prev->rsp, (uintptr_t)next->rsp);
 }
@@ -474,6 +497,7 @@ void sched_start(void)
     if (!boot)
         panic("sched: no slot for boot thread");
     memset(boot, 0, sizeof(*boot));
+    thread_fpu_defaults(boot);
     boot->tid = 0;
     strncpy(boot->name, "shell/main", THREAD_NAME_MAX - 1);
     boot->state = THREAD_RUNNING;

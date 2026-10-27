@@ -73,6 +73,9 @@ struct thread {
     struct user_regs uregs;     /* 最近一次从 ring 3 陷入时的现场 */
     struct process  *proc;      /* 所属进程；内核线程为 NULL */
     u64              pml4;      /* 切换时要装入 CR3 的页表；0 表示沿用内核页表 */
+    u64              fs_base;   /* 用户 TLS；每次调度切入时恢复 IA32_FS_BASE */
+    /* FXSAVE/FXRSTOR 区域必须 16 字节对齐；保存 x87/SSE/SSE2 状态。 */
+    u8               fxstate[512] __attribute__((aligned(16)));
 } __attribute__((aligned(64)));
 
 /* ================================ 接口 ================================== */

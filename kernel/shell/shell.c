@@ -23,6 +23,7 @@
 #include <fyxos/fyxgit.h>
 #include <fyxos/ide.h>
 #include <fyxos/process.h>
+#include <fyxos/deb.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -114,6 +115,7 @@ static int cmd_fyxcc(int argc, char **argv);
 static int cmd_fyxjs(int argc, char **argv);
 static int cmd_git(int argc, char **argv);
 static int cmd_run(int argc, char **argv);
+static int cmd_deb(int argc, char **argv);
 static int cmd_native(int argc, char **argv);
 
 static const struct command *const g_commands[] = {
@@ -181,7 +183,8 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "Get-ChildItem", "Get-ChildItem [路径]", "PowerShell：list files 子集", cmd_ls },
     &(const struct command){ "Get-Content", "Get-Content <文件>", "PowerShell：show file 子集",    cmd_cat },
     &(const struct command){ "Get-Process", "Get-Process",       "PowerShell：list processes 子集", cmd_threads },
-    &(const struct command){ "run",      "run <ELF>",           "从磁盘装载并等待用户程序",       cmd_run },
+    &(const struct command){ "run",      "run [linux] <ELF>",    "装载原生或静态 Linux x86_64 程序", cmd_run },
+    &(const struct command){ "deb",      "deb <未压缩amd64.deb>", "安装标准 DEB（无依赖/脚本/压缩）", cmd_deb },
 };
 
 static const struct command *find_command(const char *name)
@@ -647,18 +650,43 @@ static int cmd_git(int argc, char **argv)
 
 static int cmd_run(int argc, char **argv)
 {
-    if (argc < 2) {
-        kprintf("用法: run <ELF>\n");
+    const char *path = NULL;
+    enum process_abi abi = PROC_ABI_FYXOS;
+    if (argc == 2) {
+        path = argv[1];             /* GNU OSABI 会自动选择 Linux 分派 */
+    } else if (argc == 3 && strcmp(argv[1], "linux") == 0) {
+        path = argv[2];
+        abi = PROC_ABI_LINUX;
+    } else {
+        kprintf("用法: run [linux] <静态x86_64 ELF>；动态 ELF/PE 不支持\n");
         return 1;
     }
     int status = 0;
-    int rc = process_run_wait(argv[1], &status);
+    int rc = process_run_wait_abi(path, abi, &status);
     if (rc != 0) {
-        kprintf("run: 无法启动 %s（错误 %d）\n", argv[1], rc);
+        kprintf("run: 无法启动 %s（错误 %d）\n", path, rc);
         return 1;
     }
-    kprintf("[run] %s 退出码=%d\n", argv[1], status);
+    /* 保留既有脚本依赖的原生日志格式。 */
+    kprintf("[run] %s 退出码=%d\n", path, status);
+    if (abi == PROC_ABI_LINUX)
+        kprintf("[linux] 未识别调用累计=%llu（可选能力 ENOSYS 亦有独立日志）\n",
+                (unsigned long long)linux_syscall_unknown_count());
     return status;
+}
+
+static int cmd_deb(int argc, char **argv)
+{
+    if (argc != 2) {
+        kprintf("用法: deb <标准未压缩 amd64.deb>\n");
+        return 1;
+    }
+    int rc = deb_install(argv[1]);
+    if (rc != 0) {
+        kprintf("deb: 安装失败：%s（错误 %d）\n", argv[1], rc);
+        return 1;
+    }
+    return 0;
 }
 
 /* FYX 原生动词：统一“动词 + 对象”，每个分支都落到真实内核服务。 */

@@ -29,6 +29,7 @@
 #define USER_HEAP_BASE   0x0000000010000000ull   /* brk 起点 */
 #define USER_STACK_TOP   0x000000007ffff000ull   /* 栈顶（不含） */
 #define USER_STACK_SIZE  (64ull * 1024ull)       /* 用户栈大小 */
+#define USER_MMAP_BASE   0x0000000020000000ull   /* Linux 匿名 mmap 起点 */
 #define USER_AREA_LIMIT  0x0000800000000000ull   /* 用户空间上界（非规范地址起） */
 
 #define MAX_PROCESSES    32
@@ -56,6 +57,11 @@ struct fyx_fd {
     u8               flags;       /* FYX_FD_READ / FYX_FD_WRITE */
 };
 
+enum process_abi {
+    PROC_ABI_FYXOS = 0,
+    PROC_ABI_LINUX = 1,
+};
+
 enum process_state {
     PROC_UNUSED = 0,
     PROC_EMBRYO,        /* 刚建好、还没装载镜像 */
@@ -73,7 +79,11 @@ struct process {
 
     struct address_space as;       /* 用户地址空间（PML4 物理地址） */
     u64                entry;      /* 程序入口（虚拟地址） */
-    u64                brk;        /* 程序断点（堆顶） */
+    enum process_abi   abi;        /* 原生 FYXOS 或 Linux x86_64 syscall ABI */
+    u64                brk;        /* 逻辑程序断点（堆顶） */
+    u64                brk_base;   /* 允许收缩到的初始堆顶 */
+    u64                brk_mapped; /* 已映射堆页的末端 */
+    u64                mmap_next;  /* 匿名 mmap 的单调分配游标 */
     u64                ustack_top;
 
     struct thread     *thread;     /* TODO: 一进程一线程，日后改成线程链表 */
@@ -112,16 +122,22 @@ long sys_exit(int code);
 long sys_getpid(void);
 long sys_getppid(void);
 long sys_brk(u64 new_brk);
+long sys_mmap(u64 addr, size_t len, u32 prot, u32 flags, int fd, u64 offset);
+long sys_mprotect(u64 addr, size_t len, u32 prot);
+long sys_munmap(u64 addr, size_t len);
 
 /* 内嵌用户程序镜像（tools/mkimage 之外，由 .incbin 随内核提供） */
 extern const u8 g_init_image_start[];
 extern const u8 g_init_image_end[];
 extern const u8 g_gcc_demo_image_start[];
 extern const u8 g_gcc_demo_image_end[];
+extern const u8 g_deb_demo_image_start[];
+extern const u8 g_deb_demo_image_end[];
 
 void process_start_init(void);   /* 由 kmain 调用：装载并运行第一个用户进程 */
 
 /* 内核 Shell/IDE 启动一个磁盘 ELF，等待退出并回收；返回装载/调度错误。 */
 int  process_run_wait(const char *name, int *exit_code);
+int  process_run_wait_abi(const char *name, enum process_abi abi, int *exit_code);
 
 #endif /* FYXOS_PROCESS_H */

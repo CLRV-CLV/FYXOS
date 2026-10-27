@@ -84,6 +84,11 @@ long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
             t->uregs = g_user_regs;
     }
 
+    /* Linux 与 FYX 原生 ABI 完全分表；不能把 0.. 与 0x1000.. 混用。 */
+    struct process *proc = current_process();
+    if (proc && proc->abi == PROC_ABI_LINUX)
+        return linux_syscall_dispatch(number, a1, a2, a3, a4, a5, a6);
+
     switch (number) {
     case SYS_LOG_WRITE:
         return sys_log_write((const char *)(uintptr_t)a1, (size_t)a2);

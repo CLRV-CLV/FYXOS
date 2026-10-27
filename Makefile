@@ -12,7 +12,8 @@
 #    make test       -> 跑全部自动化测试
 #    make clean
 #
-#  工具链要求：gcc / GNU as / GNU ld（freestanding），Python 3 + unicorn（仅测试）
+#  工具链要求：gcc / GNU as / GNU ld（freestanding），静态 glibc 与 dpkg-deb
+#  （Linux/DEB 验收载荷），Python 3 + unicorn（仅测试）
 # ============================================================================
 
 ARCH        ?= x86_64
@@ -68,6 +69,11 @@ SDK_HELLO_ELF := $(BUILD)/sdk/hello.elf
 SDK_INPUTS    := $(shell find sdk -type f) tools/mksdk.py \
                  user/start.S user/user.ld user/fyx.h
 
+# ---- Linux x86_64 静态 glibc + 标准未压缩 amd64 DEB 验收载荷 ---------------
+COMPAT_DIR    := $(BUILD)/compat/deb-demo
+COMPAT_DEB    := $(BUILD)/compat/fyx-deb-demo.deb
+COMPAT_INPUTS := compat/deb-demo/hello.c compat/deb-demo/control
+
 # ---- stage2 的 32 位 C 部分（freestanding） --------------------------------
 SCFLAGS := -std=gnu11 -ffreestanding -fno-pie -fno-stack-protector \
            -fno-builtin -fno-common -fno-asynchronous-unwind-tables \
@@ -92,14 +98,14 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user sdk image app-image emu emu-quick test test-sdk test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
+.PHONY: all kernel boot user sdk compat image app-image emu emu-quick test test-sdk test-compat test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
 all: image
 
 # ---------------------------------------------------------------- 内核 ELF
-$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF)
+$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB)
 	@mkdir -p $(dir $@)
 	$(LD) $(KLDFLAGS) -T kernel/linker.ld -o $@ $(KERNEL_OBJS)
 	@echo "  LD      $@"
@@ -113,6 +119,20 @@ $(BUILD)/kernel/%.o: kernel/%.S
 	@mkdir -p $(dir $@)
 	$(CC) $(KCFLAGS) $(DEPFLAGS) -c -o $@ $<
 	@echo "  AS      $<"
+
+# ------------------------------------------------------ Linux/DEB 兼容验收载荷
+compat: $(COMPAT_DEB)
+
+$(COMPAT_DEB): $(COMPAT_INPUTS)
+	@rm -rf $(COMPAT_DIR)
+	@mkdir -p $(COMPAT_DIR)/root/usr/bin $(COMPAT_DIR)/root/DEBIAN $(dir $@)
+	$(CC) -static -Os -no-pie -fno-pie -fno-stack-protector \
+	      -ffunction-sections -fdata-sections -Wl,--gc-sections \
+	      -o $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo compat/deb-demo/hello.c
+	strip --strip-all $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
+	cp compat/deb-demo/control $(COMPAT_DIR)/root/DEBIAN/control
+	dpkg-deb -Znone --root-owner-group --build $(COMPAT_DIR)/root $@
+	@echo "  DEB     $@ (static Linux x86_64 / uncompressed amd64)"
 
 # ------------------------------------------------------------------ 用户态
 # 用户程序先编成静态 ELF64，再由 kernel/sys/init_image.S 用 .incbin 作为
@@ -155,7 +175,7 @@ app-image: $(SDK_STAMP)
 
 # init_image.S 用 .incbin 内嵌用户 ELF，必须显式声明这个依赖；
 # 否则用户程序更新后只会重链内核，旧 blob 仍留在 init_image.o 里。
-$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF)
+$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB)
 
 # ------------------------------------------------------------------ 引导器
 boot: $(BUILD)/stage1.bin $(BUILD)/stage2.bin
@@ -210,6 +230,7 @@ test: image
 	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/full-desktop.png --test --max-seconds 90
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/quick-desktop.png --test --max-seconds 90
 	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
+	$(PY) tools/test_compat.py --kernel $(KERNEL_ELF) --package $(COMPAT_DEB) --payload $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
 	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)
 	$(PY) tools/test_toolchain.py --kernel $(KERNEL_ELF)
 	$(PY) tools/test_git.py --image $(IMG) --kernel $(KERNEL_ELF)
@@ -219,6 +240,9 @@ test: image
 
 test-sdk: image $(SDK_ARCHIVE)
 	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
+
+test-compat: image
+	$(PY) tools/test_compat.py --kernel $(KERNEL_ELF) --package $(COMPAT_DEB) --payload $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
 
 test-network: image
 	$(PY) tools/test_network.py --kernel $(KERNEL_ELF)

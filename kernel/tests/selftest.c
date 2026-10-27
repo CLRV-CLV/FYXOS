@@ -195,6 +195,10 @@ SELFTEST(cpu)
     CHECK(read_cr3() != 0);                 /* 分页必须已经开启 */
     CHECK((read_cr0() & 0x80000000) != 0);  /* CR0.PG */
     CHECK((read_cr4() & 0x20) != 0);        /* CR4.PAE */
+    if (g_cpu.has_sse2) {
+        CHECK((read_cr4() & 0x600) == 0x600); /* OSFXSR | OSXMMEXCPT */
+        CHECK((read_cr0() & 0xc) == 0);       /* EM=TS=0 */
+    }
     CHECK((rdmsr(MSR_EFER) & 0x400) != 0);  /* EFER.LMA：长模式已激活 */
     return 0;
 }

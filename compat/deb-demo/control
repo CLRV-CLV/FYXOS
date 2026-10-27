@@ -1,0 +1,7 @@
+Package: fyx-deb-demo
+Version: 1.0-1
+Section: misc
+Priority: optional
+Architecture: amd64
+Maintainer: FYXOS Compatibility Test <test@fyxos.invalid>
+Description: static Linux ABI compatibility test

@@ -7,7 +7,9 @@
 > 宿主 GCC 负责编译，SDK 提供 FYXOS CRT、链接脚本、freestanding 最小运行库和
 > `libgcc` 链接，生成静态 x86_64 ELF。指针、数组、结构体、枚举、函数指针与
 > `_Static_assert` 的预装示例已在 ring3 返回 42。GCC 当前不在 guest 内运行，
-> 也没有 hosted libc/Linux ABI；该边界与下列内置子集编译器分开陈述。
+> SDK 也没有 hosted libc，其产物使用 FYX 原生 ABI。内核另有独立的静态
+> Linux x86_64 兼容纵切片，但不能外推为 guest 内 GCC 或完整 Linux ABI；
+> 这些边界与下列内置子集编译器分开陈述。
 >
 > 当前可运行实现包括 `kernel/toolchain/fyxcc.c` 的小型 C 子集前端，以及
 > `kernel/toolchain/fyxjs.c` 的 FyxJS 静态整数子集前端；两者直接生成静态
@@ -255,5 +257,8 @@ fyx-gfx    = ">=0.9"
 - `.fyx` 包格式
 - 文件权限与能力（capability）模型
 
-内核不提供 Linux 兼容层；兼容性由 `fyx-libc` 在**源码级**保证（POSIX 完整），
-并对常见的 Linux 专有行为给出明确文档与替代方案。
+FYX 原生工具链不依赖 Linux 兼容层；目标兼容性由 `fyx-libc` 在**源码级**
+保证（POSIX 完整），并对常见 Linux 专有行为给出文档与替代方案。内核另有
+静态 Linux x86_64 ABI 纵切片，与这里的原生 SDK 分表；其实际子集和未完成项
+见 [`../design/linux-deb-compat.md`](../design/linux-deb-compat.md)，不改变
+“完整 POSIX/Linux 兼容尚未完成”的结论。

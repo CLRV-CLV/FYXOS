@@ -183,6 +183,7 @@ static void process_thread_entry(void *arg)
     vmm_switch(p->as.pml4);
     gdt_set_kernel_stack((u64)t->stack_base);
     syscall_set_kernel_stack((u64)t->stack_base);
+    wrmsr(MSR_FS_BASE, t->fs_base);
 
     arch_return_to_user(&t->uregs);     /* NORETURN */
 }
@@ -219,7 +220,11 @@ long sys_fork(void)
     }
 
     child->entry      = parent->entry;
+    child->abi        = parent->abi;
     child->brk        = parent->brk;
+    child->brk_base   = parent->brk_base;
+    child->brk_mapped = parent->brk_mapped;
+    child->mmap_next  = parent->mmap_next;
     child->ustack_top = parent->ustack_top;
     child->parent     = parent;
     pipe_clone_fds(child, parent);
@@ -242,6 +247,7 @@ long sys_fork(void)
     /* 子进程继承父进程的用户现场，但 fork 在子进程里返回 0 */
     ct->uregs = pt->uregs;
     ct->uregs.rax = 0;
+    ct->fs_base = pt->fs_base;
     ct->proc  = child;
     ct->pml4  = child->as.pml4;
     child->thread = ct;
@@ -346,6 +352,7 @@ long sys_exec(const char *name, const char *const argv[],
     struct process image;
     memset(&image, 0, sizeof(image));
     image.as = new_as;
+    image.abi = p->abi;
     strncpy(image.name, p->name, PROC_NAME_MAX - 1);
 
     if (process_load_elf(&image, program, program_size,
@@ -360,7 +367,11 @@ long sys_exec(const char *name, const char *const argv[],
     struct address_space old_as = p->as;
     p->as = new_as;
     p->entry = image.entry;
+    p->abi = image.abi;
     p->brk = image.brk;
+    p->brk_base = image.brk_base;
+    p->brk_mapped = image.brk_mapped;
+    p->mmap_next = image.mmap_next;
     p->ustack_top = image.ustack_top;
     strncpy(p->name, name_copy, PROC_NAME_MAX - 1);
     p->state = PROC_RUNNING;
@@ -373,6 +384,8 @@ long sys_exec(const char *name, const char *const argv[],
     /* 直接切回用户态：不再返回到发起 exec 的那条用户指令 */
     gdt_set_kernel_stack((u64)t->stack_base);
     syscall_set_kernel_stack((u64)t->stack_base);
+    t->fs_base = 0;
+    wrmsr(MSR_FS_BASE, 0);
     arch_return_to_user(&t->uregs);
 }
 
@@ -467,27 +480,103 @@ long sys_brk(u64 new_brk)
     if (!p)
         return -FYX_EINVAL;
     if (new_brk == 0)
-        return (long)p->brk;                    /* 查询 */
-    if (new_brk < USER_HEAP_BASE || new_brk > USER_AREA_LIMIT)
-        return -FYX_EINVAL;
+        return (long)p->brk;
+    if (new_brk < p->brk_base || new_brk >= USER_MMAP_BASE)
+        return p->abi == PROC_ABI_LINUX ? (long)p->brk : -FYX_EINVAL;
 
-    if (new_brk > p->brk) {
-        size_t grow = ALIGN_UP(new_brk - p->brk, PAGE_SIZE);
-        for (u64 off = 0; off < grow; off += PAGE_SIZE) {
+    if (new_brk <= p->brk) {
+        /* 保留已映射页，逻辑 break 仍可收缩；进程退出时统一回收。 */
+        p->brk = new_brk;
+        return (long)p->brk;
+    }
+
+    u64 mapped_end = ALIGN_UP(new_brk, PAGE_SIZE);
+    if (mapped_end > p->brk_mapped) {
+        u64 first = p->brk_mapped;
+        for (u64 page = first; page < mapped_end; page += PAGE_SIZE) {
             phys_addr_t f = pmm_alloc_frame();
-            if (f == PMM_INVALID)
-                return -FYX_ENOMEM;
+            if (f == PMM_INVALID) {
+                if (page > first)
+                    vmm_unmap_in(&p->as, first, page - first);
+                return p->abi == PROC_ABI_LINUX ? (long)p->brk : -FYX_ENOMEM;
+            }
             memset(phys_to_virt(f), 0, PAGE_SIZE);
-            if (vmm_map_in(&p->as, p->brk + off, f, PAGE_SIZE,
+            if (vmm_map_in(&p->as, page, f, PAGE_SIZE,
                            VMM_USER | VMM_WRITE | VMM_NOEXEC) != 0) {
                 pmm_free_frame(f);
-                return -FYX_ENOMEM;
+                if (page > first)
+                    vmm_unmap_in(&p->as, first, page - first);
+                return p->abi == PROC_ABI_LINUX ? (long)p->brk : -FYX_ENOMEM;
             }
         }
-        p->brk += grow;
+        p->brk_mapped = mapped_end;
     }
-    /* TODO: 缩小 brk 时回收页框 */
+    p->brk = new_brk;
     return (long)p->brk;
+}
+
+static u32 linux_prot_to_vmm(u32 prot)
+{
+    u32 flags = VMM_USER;
+    if (prot & 0x2)                 /* PROT_WRITE */
+        flags |= VMM_WRITE;
+    if (!(prot & 0x4))              /* PROT_EXEC */
+        flags |= VMM_NOEXEC;
+    return flags;
+}
+
+long sys_mmap(u64 addr, size_t len, u32 prot, u32 flags, int fd, u64 offset)
+{
+    UNUSED(addr);
+    UNUSED(fd);
+    struct process *p = current_process();
+    if (!p || len == 0 || len > USER_AREA_LIMIT || offset != 0 ||
+        (prot & ~0x7u) || !(flags & 0x02) || !(flags & 0x20) ||
+        (flags & 0x10))
+        return -FYX_EINVAL;         /* v1: PRIVATE|ANONYMOUS，拒绝 FIXED */
+    size_t bytes = ALIGN_UP(len, PAGE_SIZE);
+    u64 base = p->mmap_next ? p->mmap_next : USER_MMAP_BASE;
+    if (bytes > USER_AREA_LIMIT - base)
+        return -FYX_ENOMEM;
+
+    for (u64 off = 0; off < bytes; off += PAGE_SIZE) {
+        phys_addr_t frame = pmm_alloc_frame();
+        if (frame == PMM_INVALID) {
+            if (off)
+                vmm_unmap_in(&p->as, base, off);
+            return -FYX_ENOMEM;
+        }
+        memset(phys_to_virt(frame), 0, PAGE_SIZE);
+        if (vmm_map_in(&p->as, base + off, frame, PAGE_SIZE,
+                       linux_prot_to_vmm(prot)) != 0) {
+            pmm_free_frame(frame);
+            if (off)
+                vmm_unmap_in(&p->as, base, off);
+            return -FYX_ENOMEM;
+        }
+    }
+    p->mmap_next = base + bytes;
+    return (long)base;
+}
+
+long sys_mprotect(u64 addr, size_t len, u32 prot)
+{
+    struct process *p = current_process();
+    if (!p || !IS_ALIGNED(addr, PAGE_SIZE) || len == 0 ||
+        (prot & ~0x7u) || addr >= USER_AREA_LIMIT ||
+        len > USER_AREA_LIMIT - addr)
+        return -FYX_EINVAL;
+    return vmm_protect_in(&p->as, addr, ALIGN_UP(len, PAGE_SIZE),
+                          linux_prot_to_vmm(prot));
+}
+
+long sys_munmap(u64 addr, size_t len)
+{
+    struct process *p = current_process();
+    if (!p || !IS_ALIGNED(addr, PAGE_SIZE) || len == 0 ||
+        addr >= USER_AREA_LIMIT || len > USER_AREA_LIMIT - addr)
+        return -FYX_EINVAL;
+    return vmm_unmap_in(&p->as, addr, ALIGN_UP(len, PAGE_SIZE));
 }
 
 /* --------------------------------------------------------------- 启动 init */
@@ -544,9 +633,9 @@ static void process_reap_orphans(void)
     }
 }
 
-int process_run_wait(const char *name, int *exit_code)
+int process_run_wait_abi(const char *name, enum process_abi abi, int *exit_code)
 {
-    if (!name || !*name)
+    if (!name || !*name || (abi != PROC_ABI_FYXOS && abi != PROC_ABI_LINUX))
         return -FYX_EINVAL;
     process_reap_orphans();
 
@@ -554,6 +643,7 @@ int process_run_wait(const char *name, int *exit_code)
     if (!p)
         return -FYX_ENOMEM;
     p->parent = NULL;
+    p->abi = abi;
 
     void *program = NULL;
     size_t size = 0;
@@ -590,4 +680,9 @@ int process_run_wait(const char *name, int *exit_code)
     t->proc = NULL;
     process_free(p);
     return FYX_OK;
+}
+
+int process_run_wait(const char *name, int *exit_code)
+{
+    return process_run_wait_abi(name, PROC_ABI_FYXOS, exit_code);
 }

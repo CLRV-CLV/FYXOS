@@ -63,6 +63,8 @@ void vmm_destroy_address_space(struct address_space *as);
 /* 往指定地址空间映射（用户进程用；内核空间继续用 vmm_map） */
 int  vmm_map_in(struct address_space *as, u64 virt, phys_addr_t phys,
                 size_t size, u32 flags);
+int  vmm_unmap_in(struct address_space *as, u64 virt, size_t size);
+int  vmm_protect_in(struct address_space *as, u64 virt, size_t size, u32 flags);
 
 /* 地址转换辅助 */
 static inline void *phys_to_virt(phys_addr_t pa)

@@ -60,6 +60,16 @@ static void cpuid_brand(char out[49])
     out[48] = '\0';
 }
 
+static void cpu_enable_sse2(void)
+{
+    /* 长模式用户态基线包含 SSE2；内核自身仍用 -mno-sse* 编译。 */
+    write_cr0((read_cr0() | 0x2) & ~0xcull); /* MP=1，EM=TS=0 */
+    write_cr4(read_cr4() | 0x600);           /* OSFXSR | OSXMMEXCPT */
+    __asm__ volatile("fninit");
+    u32 mxcsr = 0x1f80;
+    __asm__ volatile("ldmxcsr %0" :: "m"(mxcsr));
+}
+
 void cpu_init(void)
 {
     memset(&g_cpu, 0, sizeof(g_cpu));
@@ -73,8 +83,10 @@ void cpu_init(void)
         g_cpu.has_tsc = true;
         g_cpu.has_syscall = true;
         g_cpu.has_apic = true;
+        g_cpu.has_sse2 = true;
         g_cpu.max_physical_bits = 36;
         g_cpu.max_virtual_bits = 48;
+        cpu_enable_sse2();
         return;
     }
 
@@ -120,4 +132,6 @@ void cpu_init(void)
      * 页表项会被判为"保留位被置位"，任何访问该页的指令都触发 #PF。 */
     if (g_cpu.has_nx)
         wrmsr(MSR_EFER, rdmsr(MSR_EFER) | MSR_EFER_NXE);
+    if (g_cpu.has_sse2)
+        cpu_enable_sse2();
 }

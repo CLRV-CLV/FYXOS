@@ -9,6 +9,7 @@
 #define ELF_MAGIC   0x464C457Ful   /* "\x7FELF" */
 #define ELFCLASS64  2
 #define ELFDATA2LSB 1
+#define ELFOSABI_GNU 3
 #define EM_X86_64   62
 #define ET_EXEC     2
 #define ET_DYN      3

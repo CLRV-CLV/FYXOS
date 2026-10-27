@@ -48,7 +48,7 @@ static int install_initial_files(void)
 {
     static const char *const dirs[] = {
         "/bin", "/etc", "/home", "/home/user", "/snapshots",
-        "/tmp", "/var", "/usr", "/opt"
+        "/tmp", "/var", "/usr", "/opt", "/packages"
     };
     for (u32 i = 0; i < ARRAY_SIZE(dirs); i++) {
         u32 node;
@@ -87,6 +87,22 @@ static int install_initial_files(void)
         }
         kprintf("[storage] 已把 GCC C11 示例安装到 /bin/gcc-c11-demo（%u 字节）\n",
                 (unsigned)size);
+    }
+
+    const char *deb_path = "/packages/fyx-deb-demo.deb";
+    size_t deb_size = (size_t)(g_deb_demo_image_end - g_deb_demo_image_start);
+    u32 deb_crc = fyx_crc32(g_deb_demo_image_start, deb_size);
+    if (!deb_size)
+        return -FYX_EINVAL;
+    if (vfs_stat(deb_path, &st) != FYX_OK || st.size != deb_size ||
+        st.crc32 != deb_crc) {
+        int rc = vfs_write_file(deb_path, g_deb_demo_image_start, deb_size);
+        if (rc != 0) {
+            kprintf("[storage] 安装 DEB 验收包失败：%d\n", rc);
+            return rc;
+        }
+        kprintf("[storage] 标准 DEB 已安装到 %s（%u 字节）\n",
+                deb_path, (unsigned)deb_size);
     }
 
     const char motd[] = "FYXOS：数据与快照均由 FYXFS CoW 事务保护。\n";
