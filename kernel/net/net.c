@@ -234,6 +234,9 @@ static int ipv4_send(u32 destination, u8 protocol, const void *payload,
 }
 
 /* -------------------------------- DHCP ---------------------------------- */
+static u16 udp_checksum_value(u32 source, u32 destination,
+                              const u8 *udp, size_t len);
+
 static int dhcp_send(u8 message_type)
 {
     u8 bootp[240 + 32];
@@ -265,8 +268,11 @@ static int dhcp_send(u8 message_type)
     write_be16(udp + 0, 68);
     write_be16(udp + 2, 67);
     write_be16(udp + 4, (u16)sizeof(udp));
-    write_be16(udp + 6, 0);             /* IPv4 UDP checksum 可省略 */
+    write_be16(udp + 6, 0);
     memcpy(udp + 8, bootp, sizeof(bootp));
+    u16 checksum = udp_checksum_value(g_net.ip, NET_IP_BROADCAST,
+                                      udp, sizeof(udp));
+    write_be16(udp + 6, checksum ? checksum : 0xFFFFu);
     return ipv4_send(NET_IP_BROADCAST, IP_UDP, udp, sizeof(udp));
 }
 
@@ -378,6 +384,19 @@ static void handle_icmp(u32 source, const u8 *icmp, size_t len)
 }
 
 /* -------------------------------- UDP ----------------------------------- */
+static u16 udp_checksum_value(u32 source, u32 destination,
+                              const u8 *udp, size_t len)
+{
+    u8 pseudo[12];
+    write_be32(pseudo + 0, source);
+    write_be32(pseudo + 4, destination);
+    pseudo[8] = 0;
+    pseudo[9] = IP_UDP;
+    write_be16(pseudo + 10, (u16)len);
+    u32 sum = internet_sum(pseudo, sizeof(pseudo)) + internet_sum(udp, len);
+    return (u16)~internet_fold(sum);
+}
+
 int net_udp_send(u16 local_port, u32 remote_ip, u16 remote_port,
                  const void *data, size_t len)
 {
@@ -391,13 +410,16 @@ int net_udp_send(u16 local_port, u32 remote_ip, u16 remote_port,
     write_be16(udp + 4, (u16)(8 + len));
     write_be16(udp + 6, 0);
     memcpy(udp + 8, data, len);
+    u16 checksum = udp_checksum_value(g_net.ip, remote_ip, udp, 8 + len);
+    write_be16(udp + 6, checksum ? checksum : 0xFFFFu);
     int rc = ipv4_send(remote_ip, IP_UDP, udp, 8 + len);
     if (rc == 0)
         g_net.stats.udp_sent++;
     return rc;
 }
 
-static void handle_udp(u32 source_ip, const u8 *udp, size_t len)
+static void handle_udp(u32 source_ip, u32 destination_ip,
+                       const u8 *udp, size_t len)
 {
     if (len < 8)
         return;
@@ -406,6 +428,12 @@ static void handle_udp(u32 source_ip, const u8 *udp, size_t len)
     u16 udp_len = read_be16(udp + 4);
     if (udp_len < 8 || udp_len > len)
         return;
+    /* IPv4 允许零 checksum；非零则必须覆盖伪首部和完整 UDP 数据报。 */
+    if (read_be16(udp + 6) &&
+        udp_checksum_value(source_ip, destination_ip, udp, udp_len) != 0) {
+        g_net.stats.udp_dropped++;
+        return;
+    }
     if (destination_port == 68 && !g_net.ready) {
         handle_dhcp(udp + 8, udp_len - 8);
         return;
@@ -487,7 +515,7 @@ static void handle_ipv4(const u8 *ip, size_t len)
     if (ip[9] == IP_ICMP)
         handle_icmp(source, ip + ihl, total - ihl);
     else if (ip[9] == IP_UDP)
-        handle_udp(source, ip + ihl, total - ihl);
+        handle_udp(source, destination, ip + ihl, total - ihl);
     else if (ip[9] == IP_TCP)
         handle_tcp(source, ip + ihl, total - ihl);
 }

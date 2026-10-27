@@ -18,6 +18,8 @@
 #define TCP_SYN_SENT          1u
 #define TCP_ESTABLISHED       2u
 #define TCP_CLOSE_WAIT        3u
+#define TCP_MAX_ATTEMPTS      3u
+#define TCP_RETRY_MS          20u
 
 struct socket_packet {
     u32 source_ip;
@@ -32,6 +34,7 @@ struct fyx_socket {
     u32 refs;
     u8 kind;                     /* NET_SOCK_DGRAM / NET_SOCK_STREAM */
     u8 tcp_state;
+    bool tcp_unacked;            /* 一个正在等待 ACK 的数据段 */
     int tcp_error;
     u16 local_port;
     bool bound;
@@ -283,24 +286,26 @@ static int tcp_connect_socket(struct fyx_socket *socket, u32 ip, u16 port)
     socket->peer_port = port;
     socket->connected = true;
     socket->tcp_error = 0;
+    socket->tcp_unacked = false;
     socket->tcp_ack = 0;
     socket->tcp_sequence = initial + 1;
     socket->tcp_state = TCP_SYN_SENT;
-    rc = net_tcp_send(socket->local_port, ip, port, initial, 0,
-                      NET_TCP_SYN, NULL, 0);
-    if (rc != 0)
-        goto fail;
-
-    u64 deadline = pit_ticks() + socket_ms_to_ticks(100);
-    while (pit_ticks() < deadline) {
-        net_poll();
-        if (socket->tcp_state == TCP_ESTABLISHED)
-            return FYX_OK;
-        if (socket->tcp_error) {
-            rc = socket->tcp_error;
+    for (u32 attempt = 0; attempt < TCP_MAX_ATTEMPTS; attempt++) {
+        rc = net_tcp_send(socket->local_port, ip, port, initial, 0,
+                          NET_TCP_SYN, NULL, 0);
+        if (rc != 0)
             goto fail;
+        u64 retry = pit_ticks() + socket_ms_to_ticks(TCP_RETRY_MS);
+        while (pit_ticks() < retry) {
+            net_poll();
+            if (socket->tcp_state == TCP_ESTABLISHED)
+                return FYX_OK;
+            if (socket->tcp_error) {
+                rc = socket->tcp_error;
+                goto fail;
+            }
+            thread_sleep_ms(1);
         }
-        thread_sleep_ms(1);
     }
     rc = -FYX_ETIMEDOUT;
 fail:
@@ -368,14 +373,34 @@ static long tcp_send_socket(struct fyx_socket *socket,
         return 0;
     if (!buffer || len > NET_MAX_TCP_PAYLOAD)
         return -FYX_ERANGE;
-    int rc = net_tcp_send(socket->local_port, socket->peer_ip,
-                          socket->peer_port, socket->tcp_sequence,
-                          socket->tcp_ack, NET_TCP_PSH | NET_TCP_ACK,
-                          buffer, len);
-    if (rc != 0)
-        return rc;
+    if (socket->tcp_unacked)
+        return -FYX_EBUSY;
+
+    u32 sequence = socket->tcp_sequence;
     socket->tcp_sequence += (u32)len;
-    return (long)len;
+    socket->tcp_unacked = true;
+    for (u32 attempt = 0; attempt < TCP_MAX_ATTEMPTS; attempt++) {
+        int rc = net_tcp_send(socket->local_port, socket->peer_ip,
+                              socket->peer_port, sequence, socket->tcp_ack,
+                              NET_TCP_PSH | NET_TCP_ACK, buffer, len);
+        if (rc != 0) {
+            socket->tcp_sequence = sequence;
+            socket->tcp_unacked = false;
+            return rc;
+        }
+        u64 retry = pit_ticks() + socket_ms_to_ticks(TCP_RETRY_MS);
+        while (pit_ticks() < retry) {
+            net_poll();
+            if (socket->tcp_error)
+                return socket->tcp_error;
+            if (!socket->tcp_unacked)
+                return (long)len;         /* 匹配 ACK 到达才报告写入成功 */
+            if (socket->tcp_state == TCP_CLOSED)
+                return -FYX_ENOTCONN;
+            thread_sleep_ms(1);
+        }
+    }
+    return -FYX_ETIMEDOUT;
 }
 
 long socket_tcp_send(struct fyx_socket *socket, const void *buffer, size_t len)
@@ -500,6 +525,9 @@ void net_socket_tcp_deliver(u16 destination_port, u32 source_ip,
         }
     } else if (socket->tcp_state == TCP_ESTABLISHED ||
                socket->tcp_state == TCP_CLOSE_WAIT) {
+        if ((flags & NET_TCP_ACK) && socket->tcp_unacked &&
+            acknowledgment == socket->tcp_sequence)
+            socket->tcp_unacked = false;
         if (len) {
             acknowledge = true;       /* 正确、重复或乱序都确认当前期望序号 */
             if (sequence == socket->tcp_ack &&

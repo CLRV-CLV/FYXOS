@@ -39,6 +39,11 @@ def tcp_checksum(source: bytes, destination: bytes, segment: bytes) -> int:
     return checksum(pseudo + segment)
 
 
+def udp_checksum(source: bytes, destination: bytes, segment: bytes) -> int:
+    pseudo = source + destination + bytes((0, 17)) + struct.pack("!H", len(segment))
+    return checksum(pseudo + segment)
+
+
 def ethernet(destination: bytes, source: bytes, ethertype: int,
              payload: bytes) -> bytes:
     return destination + source + struct.pack("!H", ethertype) + payload
@@ -67,6 +72,8 @@ class IPv4Peer:
         self.tcp_fins = 0
         self.tcp_dropped = 0
         self.tcp_connections = {}
+        self.drop_tcp53_syn = True
+        self.drop_tcp7_data = True
 
     def _ip(self, source: bytes, destination: bytes, protocol: int,
             payload: bytes) -> bytes:
@@ -74,10 +81,15 @@ class IPv4Peer:
         return ipv4_packet(source, destination, protocol, payload, self.ident)
 
     def _udp(self, source_ip: bytes, destination_ip: bytes,
-             source_port: int, destination_port: int, payload: bytes) -> bytes:
-        udp = struct.pack("!HHHH", source_port, destination_port,
-                          8 + len(payload), 0) + payload
-        return self._ip(source_ip, destination_ip, 17, udp)
+             source_port: int, destination_port: int, payload: bytes,
+             corrupt_checksum: bool = False) -> bytes:
+        udp = bytearray(struct.pack("!HHHH", source_port, destination_port,
+                                    8 + len(payload), 0) + payload)
+        value = udp_checksum(source_ip, destination_ip, bytes(udp))
+        struct.pack_into("!H", udp, 6, value or 0xFFFF)
+        if corrupt_checksum:
+            udp[6] ^= 0x01
+        return self._ip(source_ip, destination_ip, 17, bytes(udp))
 
     def _dhcp(self, request: bytes, message_type: int) -> bytes:
         bootp = bytearray(300)
@@ -212,6 +224,10 @@ class IPv4Peer:
             if flags & 0x10:               # 本对端只接受主动打开的第一个 SYN
                 self.tcp_dropped += 1
                 return []
+            if destination_port == 53 and self.drop_tcp53_syn:
+                self.drop_tcp53_syn = False
+                self.tcp_dropped += 1
+                return []                   # 强制 guest 重传同一个 SYN
             connection = {"client_next": (sequence + 1) & 0xFFFFFFFF,
                           "server_next": 0x1001,
                           "service": destination_port}
@@ -240,6 +256,10 @@ class IPv4Peer:
             if sequence != connection["client_next"]:
                 self.tcp_dropped += 1
                 return []
+            if connection["service"] == 7 and self.drop_tcp7_data:
+                self.drop_tcp7_data = False
+                self.tcp_dropped += 1
+                return []                   # 强制 guest 重传同一数据段
             connection["client_next"] = (sequence + len(payload)) & 0xFFFFFFFF
             response_payload = payload
             response_flags = 0x18          # PSH|ACK
@@ -340,6 +360,12 @@ class IPv4Peer:
                                                                   body[:6])
         if udp_len < 8 or udp_len > len(body):
             return []
+        wire_checksum = struct.unpack("!H", body[6:8])[0]
+        if wire_checksum and udp_checksum(source_ip, destination_ip,
+                                          body[:udp_len]) != 0:
+            return []
+        if destination_port in (9, 53, 67) and not wire_checksum:
+            return []                       # DHCP/DNS/echo 均要求 guest 生成 checksum
         udp_payload = body[8:udp_len]
 
         if destination_port == 67 and source_port == 68 and len(udp_payload) >= 240:
@@ -381,9 +407,12 @@ class IPv4Peer:
 
         if destination_port == 9 and destination_ip == self.server_ip:
             self.udp_echoes += 1
-            return [ethernet(source_mac, self.peer_mac, 0x0800,
-                             self._udp(self.server_ip, source_ip, 9,
-                                       source_port, udp_payload))]
+            bad = self._udp(self.server_ip, source_ip, 9, source_port,
+                            b"udp-checksum-invalid", corrupt_checksum=True)
+            good = self._udp(self.server_ip, source_ip, 9, source_port,
+                             udp_payload)
+            return [ethernet(source_mac, self.peer_mac, 0x0800, bad),
+                    ethernet(source_mac, self.peer_mac, 0x0800, good)]
         return []
 
 

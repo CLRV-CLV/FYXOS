@@ -21,8 +21,8 @@ PCI 配置空间
   的线长；协议栈只接收去掉 CRC 后的 Ethernet 帧。CBR 是生产者偏移，CAPR
   是消费者偏移减 16。
 - `kernel/net/net.c`：自行构造和解析 Ethernet、ARP、IPv4、DHCP、ICMP、UDP、
-  TCP 报文，计算/校验 Internet 与 TCP 伪首部 checksum，维护单一 ARP 下一跳
-  缓存。DHCP ACK 读取 option 6；缺失时以网关作为 DNS 首版回退。
+  TCP 报文，计算/校验 Internet 与 UDP/TCP 伪首部 checksum，维护单一 ARP
+  下一跳缓存。DHCP ACK 读取 option 6；缺失时以网关作为 DNS 首版回退。
 - `kernel/net/socket.c`：最多 16 个 UDP/TCP socket，每 socket 8 个接收队列
   项；支持显式/隐式绑定、临时端口、connect 过滤、引用计数与 fork 继承。
   UDP 使用数据报队列；TCP 支持同一接收项的部分读取和流式 EOF。
@@ -56,6 +56,8 @@ TCP 也走现有 `read/write/close`。其他 domain/type 返回 `-FYX_ENOSYS`，
 - 主动 open：绑定临时端口，发送 SYN，校验匹配四元组的 SYN-ACK 与 ACK 序号，
   然后发送 ACK 并进入 ESTABLISHED；连接超时或 RST 会返回错误；
 - 发送固定 20 字节头的 PSH/ACK 数据段，维护下一发送序号与期望接收序号；
+  SYN 与单个未确认数据段按固定 20ms 重试、最多发送三次，数据收到匹配 ACK
+  后才向 `write` 返回成功；已有未确认段时返回 `EBUSY`；
 - 接收只按期望序号入队，发送 ACK；队列满、重复或乱序不会伪报已接收；
 - 单段最多 1460 字节；应用用较小 buffer 读取时保留未消费部分，而不是像
   UDP 一样丢弃数据报剩余字节；
@@ -63,11 +65,18 @@ TCP 也走现有 `read/write/close`。其他 domain/type 返回 `-FYX_ENOSYS`，
   引用关闭时发送 FIN/ACK；
 - `ifconfig` 显示 TCP 收、发和 checksum/格式丢弃统计。
 
-这是受限客户端，不是完整 TCP：没有 listen/accept/server、同时打开、发送
-未确认队列、重传、超时估计、拥塞/流量控制、乱序重组、选择确认、窗口缩放、
+这是受限客户端，不是完整 TCP：没有 listen/accept/server、同时打开、多段
+发送未确认队列、自适应 RTO、拥塞/流量控制、乱序重组、选择确认、窗口缩放、
 TCP options、MSS 协商或完整 FIN/TIME_WAIT 状态机。
 
-## 4. DNS v1 的协议检查
+## 4. UDP checksum
+
+所有 guest 发出的 UDP 报文（包括 DHCP 与 DNS）都计算 IPv4 伪首部和 UDP
+checksum；收到非零 checksum 的 UDP 报文也必须通过同一伪首部校验。为兼容
+IPv4 的可选校验行为，checksum 字段为零的报文仍可接收，但不因此跳过非零坏
+checksum 的拒绝。坏报文计入 `ifconfig` 的 UDP 丢包统计，不交付 socket。
+
+## 5. DNS v1 的协议检查
 
 `net_dns_resolve(name, &address, timeout_ms)` 发送单个递归 A 查询。查询名
 支持字母、数字、`-`、`_`、点和最后一个根点；检查空标签、63 字节标签上限
@@ -87,7 +96,7 @@ DNS/53，发送两字节网络序长度前缀和原查询，再按长度读取�
 多次部分 TCP recv，提前 EOF、超时和长度超过 1472 字节都会报错。其他畸形
 UDP 报文不会被误判为截断并重试。当前不缓存、不重传、不递归追 CNAME。
 
-## 5. Shell 与可见状态
+## 6. Shell 与可见状态
 
 - `ifconfig`：显示 MAC、IPv4、掩码、网关、DNS、ARP 结果与 UDP/TCP 统计。
 - `resolve <主机名> [毫秒]`：通过 DHCP 下发的服务器查询并打印 IPv4。
@@ -96,7 +105,7 @@ UDP 报文不会被误判为截断并重试。当前不缓存、不重传、不�
 
 `ifconfig` 会先执行一次 `net_poll()`，因此同一命令也覆盖空 RX 环路径。
 
-## 6. 台架不是“直接返回成功”
+## 7. 台架不是“直接返回成功”
 
 `tools/rtl8139.py` 实现两部分：
 
@@ -112,9 +121,12 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
 - 客户机：`52:54:00:12:34:56`，DHCP 获得 `10.0.2.15/24`；
 - 网关/DNS/对端：`52:54:00:65:02:02`，`10.0.2.2`；
 - ring3 init 绑定 UDP/40000，向 UDP/9 发送 `fyxos-ring3-udp` 并校验回应；
+  对端先注入同内容但 UDP checksum 错误的 echo，再发送正确帧，坏帧误收会使
+  内容比较失败；
 - TCP/8 对 SYN 返回标准 RST/ACK，ring3 必须得到连接错误；TCP/7 先发出
   checksum 错误且序号不同的 SYN-ACK，再发正确帧，坏帧若未被丢弃会使后续
-  echo 失败；对端也校验 guest 伪首部 checksum、SEQ/ACK，echo 携带 FIN；
+  echo 失败；对端丢弃首个 TCP/53 SYN 和首个 TCP/7 数据段，强制实测重传，
+  同时校验 guest 伪首部 checksum、SEQ/ACK，echo 携带 FIN；
 - ring3 TCP 每次只读 3 字节，验证部分读取，读完全部 `fyxos-ring3-tcp` 后
   还必须得到 FIN-EOF，最后 close 发出 FIN；
 - `example.test` 先返回错误 ID/不同地址，再返回正确 ID、压缩名的
@@ -125,24 +137,25 @@ IP/UDP/TCP 构造、socket 队列、DNS 编码/解码和用户 ABI 都在 FYXOS 
   NXDOMAIN、无 A、压缩指针自环与无响应超时；
 - `gateway.test` 解析为 `10.0.2.2`，随后完成真实 ICMP echo。
 
-## 7. 验收
+## 8. 验收
 
 ```bash
 make image
-make test-network   # DNS 4 项；基础自检同时要求 ring3 UDP/TCP 全部通过
-make test           # full/quick + DNS + 工具链/Git/CLI/图形/存储全部回归
+make test-network   # 网络 5 项；基础自检同时要求 ring3 UDP/TCP 全部通过
+make test           # full/quick + 网络 + 工具链/Git/CLI/图形/存储全部回归
 ```
 
 DNS 专项日志写入 `build/network-test/dns.log`。full-boot 与 quick 均直接检查
 `[init] ring3 TCP socket 通过`，并保留 DHCP、ARP、ICMP、ring3 UDP、Shell
 `ifconfig/ping` 与正常关机检查。
 
-## 8. 尚未完成的边界
+## 9. 尚未完成的边界
 
 - 仅 RTL8139、IPv4、UDP、ICMP echo、DHCP、DNS A v1 与 TCP 主动客户端 v1；
   无 E1000/VirtIO-net。
-- TCP 无 listen/server、重传、拥塞控制、乱序重组、options 和完整关闭状态机。
-- 无 IPv6、TLS、IP 分片重组和 UDP checksum 生成/校验。
+- TCP 无 listen/server、自适应 RTO、拥塞控制、乱序重组、options 和完整关闭
+  状态机；重传仅限固定间隔的 SYN 与单个未确认数据段。
+- 无 IPv6、TLS 和 IP 分片重组。
 - DNS 无缓存、重传、AAAA、CNAME 递归、搜索域和 POSIX getaddrinfo；TCP 回退
   当前每次查询只接收一个、最大 1472 字节的 DNS 报文。
 - ARP 目前只缓存一个下一跳；DHCP 首版不做租约续期与多接口配置。

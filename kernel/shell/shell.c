@@ -475,7 +475,7 @@ static int cmd_ifconfig(int argc, char **argv)
             info.gateway_mac[3], info.gateway_mac[4], info.gateway_mac[5],
             info.gateway_mac_valid ? "已解析" : "未解析");
     kprintf("  RX=%llu TX=%llu 错误=%llu ARP请求=%llu ARP回应=%llu "
-            "ICMP回应=%llu UDP收/发=%llu/%llu\n",
+            "ICMP回应=%llu UDP收/发/丢=%llu/%llu/%llu\n",
             (unsigned long long)stats.rx_packets,
             (unsigned long long)stats.tx_packets,
             (unsigned long long)stats.rx_errors,
@@ -483,7 +483,8 @@ static int cmd_ifconfig(int argc, char **argv)
             (unsigned long long)stats.arp_replies,
             (unsigned long long)stats.icmp_echo_replies,
             (unsigned long long)stats.udp_received,
-            (unsigned long long)stats.udp_sent);
+            (unsigned long long)stats.udp_sent,
+            (unsigned long long)stats.udp_dropped);
     kprintf("  TCP收/发/丢=%llu/%llu/%llu\n",
             (unsigned long long)stats.tcp_received,
             (unsigned long long)stats.tcp_sent,

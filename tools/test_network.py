@@ -85,6 +85,16 @@ def main():
         print(f"  [FAIL] DNS TCP 回退：{error}")
 
     try:
+        if not re.search(r"UDP[^\r\n]*=1/1/1", out):
+            raise RuntimeError("坏 UDP checksum 未计入丢弃统计")
+        if not re.search(r"TCP[^\r\n]*=4/7/1", out):
+            raise RuntimeError("TCP 数据重传/坏 SYN-ACK 统计不符")
+        print("  [PASS] TCP SYN/数据重传与 UDP checksum 生成、坏帧丢弃")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] TCP/UDP 可靠性：{error}")
+
+    try:
         expect_resolve_error(out, "missing.test", -8, "NXDOMAIN")
         expect_resolve_error(out, "empty.test", -8, "无 A 记录")
         expect_resolve_error(out, "broken.test", -21, "压缩指针环路")
