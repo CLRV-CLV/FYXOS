@@ -43,6 +43,7 @@ FYXOS 仿真台架 (fyxemu)
 
 用法：
     fyxemu.py --image build/fyxos.img --mode full-boot
+    fyxemu.py --iso build/fyxos.iso --kernel build/fyxos.elf --mode full-boot
     fyxemu.py --kernel build/fyxos.elf --mode quick
     fyxemu.py --image build/fyxos.img --test
     fyxemu.py --image build/fyxos.img --keys "help;uptime;mem"
@@ -78,6 +79,7 @@ except ImportError:
 
 from rtl8139 import RTL8139Device
 from bga import BGADevice
+from isolive import IsoFormatError, read_live_iso
 
 # --------------------------------------------------------------------------
 # 常量
@@ -203,13 +205,14 @@ class Elf:
 # 台架
 # --------------------------------------------------------------------------
 class FyxEmu:
-    def __init__(self, image=None, kernel=None, ram_mb=64, mode="full-boot",
+    def __init__(self, image=None, iso=None, kernel=None, ram_mb=64, mode="full-boot",
                  keys=None, show_bios=False, max_seconds=120, quiet=False,
                  tick_every=20000, chunk=20000, trace_syscalls=False,
                  keys_after=None, writeback=False, disk_output=None,
                  power_fail_after=None, power_fail_write=1, no_net=False,
                  no_gfx=False, fb_output=None):
         self.image_path = image
+        self.iso_path = iso
         self.kernel_path = kernel
         self.ram_bytes = ram_mb * 1024 * 1024
         self.mode = mode
@@ -230,9 +233,18 @@ class FyxEmu:
         self.disk_output = disk_output
         self.disk_dirty = False
         self.disk = bytearray()
+        self.cd = bytearray()
+        self.cd_info = None
         if image:
             with open(image, "rb") as f:
                 self.disk = bytearray(f.read())
+        elif iso:
+            # 先从 ISO9660/El Torito 描述定位启动载荷，再模拟 BIOS 的
+            # hard-disk emulation。内核阶段则通过下面的 ATAPI 模型直接读 CD。
+            with open(iso, "rb") as f:
+                self.cd = bytearray(f.read())
+            self.cd_info = read_live_iso(self.cd)
+            self.disk = bytearray(self.cd_info.image)
         elif mode == "quick":
             # quick 模式也提供一块带合法系统分区的 32 MiB ATA RAM 盘，
             # 因而文件系统与 exec 路径不再依赖 full-boot 的镜像输入。
@@ -247,8 +259,8 @@ class FyxEmu:
         self.elf = None
         if kernel:
             self.elf = Elf(kernel)
-        elif image:
-            # full-boot 也允许只传 --image：从 MBR 的 FYXB 描述符取出
+        elif image or iso:
+            # full-boot 也允许只传 --image/--iso：从 MBR 的 FYXB 描述符取出
             # 内核 ELF（布局与 tools/mkimage.py 完全一致），用于符号解析
             # 以及用户态 iretq 仿真。尾部扇区填充不影响 ELF 解析。
             try:
@@ -302,6 +314,8 @@ class FyxEmu:
         self.ata_buffer = bytearray()
         self.ata_pos = 0
         self.ata_write_lba = None
+        self.atapi_receiving = False
+        self.atapi_packet = bytearray()
         self.ata_writes = 0
         self.power_fail_after = power_fail_after
         self.power_fail_write = power_fail_write
@@ -865,9 +879,81 @@ class FyxEmu:
             data += struct.pack("<H", word)
         return data
 
+    @staticmethod
+    def atapi_identify_sector():
+        words = [0] * 256
+        words[0] = 0x8580             # removable ATAPI, 12-byte command packet
+        words[80] = 0x0070
+        words[83] = 0x4000
+
+        def string_field(first, count, text):
+            raw = text.encode("ascii", "replace")[:count * 2].ljust(count * 2)
+            for i in range(count):
+                words[first + i] = (raw[2 * i] << 8) | raw[2 * i + 1]
+
+        string_field(10, 10, "FYXOS-CD-0001")
+        string_field(27, 20, "FYXOS LIVE ATAPI CD")
+        data = bytearray()
+        for word in words:
+            data += struct.pack("<H", word)
+        return data
+
+    def atapi_execute_packet(self):
+        self.ata_pos = 0
+        self.ata_buffer = bytearray()
+        self.ata_regs[0x1F1] = 0
+        if len(self.atapi_packet) != 12:
+            self.ata_status = 0x51
+            self.ata_regs[0x1F1] = 0x04
+            return
+        cdb = self.atapi_packet
+        opcode = cdb[0]
+        if opcode == 0x00:             # TEST UNIT READY
+            self.ata_status = 0x50
+            return
+        if opcode == 0x25:             # READ CAPACITY(10)
+            last_lba = len(self.cd) // 2048 - 1
+            self.ata_buffer = bytearray(struct.pack(">II", last_lba, 2048))
+            self.ata_status = 0x58
+            return
+        if opcode == 0x28:             # READ(10), 2048-byte logical blocks
+            lba = int.from_bytes(cdb[2:6], "big")
+            count = int.from_bytes(cdb[7:9], "big")
+            start = lba * 2048
+            data = self.cd[start:start + count * 2048]
+            if count == 0 or len(data) != count * 2048:
+                self.ata_status = 0x51
+                self.ata_regs[0x1F1] = 0x04
+                return
+            self.ata_buffer = bytearray(data)
+            self.ata_status = 0x58
+            return
+        self.ata_status = 0x51         # unsupported SCSI operation
+        self.ata_regs[0x1F1] = 0x04
+
     def ata_command(self, command):
         self.ata_pos = 0
         self.ata_write_lba = None
+        self.atapi_receiving = False
+        if self.cd and command == 0xEC:  # ATA IDENTIFY is aborted by ATAPI
+            self.ata_buffer = bytearray()
+            self.ata_status = 0x51
+            self.ata_regs[0x1F1] = 0x04
+            self.ata_regs[0x1F4] = 0x14
+            self.ata_regs[0x1F5] = 0xEB
+            return
+        if self.cd and command == 0xA1:  # IDENTIFY PACKET DEVICE
+            self.ata_buffer = self.atapi_identify_sector()
+            self.ata_regs[0x1F1] = 0
+            self.ata_status = 0x58
+            return
+        if self.cd and command == 0xA0:  # PACKET: receive a 12-byte CDB
+            self.atapi_packet = bytearray(12)
+            self.atapi_receiving = True
+            self.ata_buffer = bytearray()
+            self.ata_regs[0x1F1] = 0
+            self.ata_status = 0x58
+            return
         if command == 0xEC:              # IDENTIFY DEVICE
             self.ata_buffer = self.ata_identify_sector(len(self.disk) // 512)
             self.ata_status = 0x58       # DRDY | DSC | DRQ
@@ -908,6 +994,18 @@ class FyxEmu:
         return value
 
     def ata_data_out(self, value, size):
+        if self.atapi_receiving:
+            if self.ata_pos + size > len(self.atapi_packet):
+                self.atapi_receiving = False
+                self.ata_status = 0x51
+                return
+            self.atapi_packet[self.ata_pos:self.ata_pos + size] = \
+                int(value & ((1 << (size * 8)) - 1)).to_bytes(size, "little")
+            self.ata_pos += size
+            if self.ata_pos == len(self.atapi_packet):
+                self.atapi_receiving = False
+                self.atapi_execute_packet()
+            return
         if self.ata_write_lba is None or self.ata_pos + size > len(self.ata_buffer):
             self.ata_status = 0x51
             return
@@ -1314,8 +1412,8 @@ class FyxEmu:
 
     def run(self):
         if self.mode == "full-boot":
-            if not self.image_path:
-                print("fyxemu: full-boot 模式需要 --image", file=sys.stderr)
+            if not self.image_path and not self.iso_path:
+                print("fyxemu: full-boot 模式需要 --image 或 --iso", file=sys.stderr)
                 return 2
             ok = self.run_phase1()
             if not ok:
@@ -1463,7 +1561,8 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("内核启动横幅", "FYXOS"),
         ("自检全部通过", "自检全部通过"),
         ("调度演示完成", "demo-a 计数="),
-        ("ATA 与 FYXFS 挂载", "持久化文件系统就绪"),
+        ("ATA/ATAPI 与 FYXFS 挂载",
+         "Live RAM overlay 文件系统就绪" if emu.iso_path else "持久化文件系统就绪"),
         ("DHCP 地址配置", "[net] DHCP 完成"),
         ("ARP 下一跳解析", "[net] ARP 网关"),
         ("ICMP 网关往返", "[net] ICMP 网关往返成功"),
@@ -1512,6 +1611,7 @@ def run_selfcheck(emu: FyxEmu) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="FYXOS 仿真台架")
     ap.add_argument("--image", help="可引导磁盘镜像（full-boot 模式）")
+    ap.add_argument("--iso", help="FYXOS Live ISO（El Torito + ATAPI full-boot）")
     ap.add_argument("--kernel", help="内核 ELF（quick 模式 / 符号表）")
     ap.add_argument("--mode", choices=["full-boot", "quick"], default="full-boot")
     ap.add_argument("--ram-mb", type=int, default=64)
@@ -1542,8 +1642,15 @@ def main() -> int:
     ap.add_argument("--fb-output", default=None,
                     help="把 BGA 物理帧缓冲导出为 PNG")
     args = ap.parse_args()
+    if args.image and args.iso:
+        ap.error("--image 与 --iso 只能选择一个")
+    if args.iso and args.mode != "full-boot":
+        ap.error("--iso 仅支持 full-boot 模式")
+    if args.iso and (args.writeback or args.disk_output or args.power_fail_after):
+        ap.error("Live ISO 不写回介质，也不支持 ATA 断电注入")
 
-    emu = FyxEmu(image=args.image, kernel=args.kernel, ram_mb=args.ram_mb,
+    try:
+        emu = FyxEmu(image=args.image, iso=args.iso, kernel=args.kernel, ram_mb=args.ram_mb,
                  mode=args.mode, keys=args.keys, show_bios=args.show_bios,
                  max_seconds=args.max_seconds, quiet=args.quiet,
                  tick_every=args.tick_every, chunk=args.chunk,
@@ -1552,6 +1659,9 @@ def main() -> int:
                  power_fail_after=args.power_fail_after,
                  power_fail_write=args.power_fail_write, no_net=args.no_net,
                  no_gfx=args.no_gfx, fb_output=args.fb_output)
+    except (OSError, IsoFormatError) as exc:
+        print(f"fyxemu: 无法加载输入介质：{exc}", file=sys.stderr)
+        return 2
     emu.trace_io = args.trace_io
     if args.keys:
         # 命令分隔符仍是分号；\; 允许把 C/脚本源码中的字面分号送进 Shell。

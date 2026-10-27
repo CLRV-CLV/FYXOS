@@ -6,6 +6,8 @@
 #    make kernel     -> build/fyxos.elf（ELF64 内核）
 #    make boot       -> build/stage1.bin + build/stage2.bin
 #    make sdk        -> build/fyxos-sdk/ + build/fyxos-sdk.tar.gz + GCC 示例 ELF
+#    make iso        -> build/fyxos.iso（BIOS Live ISO，可导入 VMware）
+#    make test-iso   -> ISO 结构 + 两次完整 ATAPI 启动/Live 易失性验收
 #    make app-image APP=... -> 把自定义 GCC ELF 预装进新镜像
 #    make emu        -> 在 Unicorn 台架上真实启动（BIOS 实模式全链路）
 #    make emu-quick  -> 跳过引导扇区，直接把内核载入 64 位引擎启动
@@ -19,6 +21,7 @@
 ARCH        ?= x86_64
 BUILD       ?= build
 IMG         ?= $(BUILD)/fyxos.img
+ISO         ?= $(BUILD)/fyxos.iso
 KERNEL_ELF  ?= $(BUILD)/fyxos.elf
 
 CC          := gcc
@@ -105,7 +108,7 @@ DEPS := $(KERNEL_OBJS:.o=.d) $(STAGE2_OBJS:.o=.d)
 
 DEPFLAGS := -MMD -MP
 
-.PHONY: all kernel boot user sdk compat image app-image emu emu-quick test test-sdk test-compat test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
+.PHONY: all kernel boot user sdk compat image iso app-image emu emu-quick emu-iso test test-iso test-sdk test-compat test-network test-toolchain test-git test-cli test-graphics test-storage clean dump
 
 kernel: $(KERNEL_ELF)
 
@@ -250,6 +253,12 @@ $(IMG): $(BUILD)/stage1.bin $(BUILD)/stage2.bin $(KERNEL_ELF) tools/mkimage.py
 	                       --kernel $(KERNEL_ELF) \
 	                       --out $@
 
+# --------------------------------------------------------------- BIOS Live ISO
+iso: $(ISO)
+
+$(ISO): $(IMG) tools/mkiso.py tools/isolive.py docs/vmware-live.md
+	$(PY) tools/mkiso.py --image $(IMG) --readme docs/vmware-live.md --output $@
+
 # -------------------------------------------------------------------- 测试
 emu: image
 	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot $(EMU_ARGS)
@@ -257,7 +266,10 @@ emu: image
 emu-quick: $(KERNEL_ELF)
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick $(EMU_ARGS)
 
-test: image
+emu-iso: iso
+	$(PY) tools/fyxemu.py --iso $(ISO) --kernel $(KERNEL_ELF) --mode full-boot $(EMU_ARGS)
+
+test: image iso
 	$(PY) tools/fyxemu.py --image $(IMG) --kernel $(KERNEL_ELF) --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/full-desktop.png --test --max-seconds 90
 	$(PY) tools/fyxemu.py --kernel $(KERNEL_ELF) --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output $(BUILD)/quick-desktop.png --test --max-seconds 90
 	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)
@@ -268,6 +280,10 @@ test: image
 	$(PY) tools/test_cli.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_graphics.py --image $(IMG) --kernel $(KERNEL_ELF)
 	$(PY) tools/test_storage.py --image $(IMG) --kernel $(KERNEL_ELF)
+	$(PY) tools/test_iso.py --iso $(ISO) --image $(IMG) --kernel $(KERNEL_ELF)
+
+test-iso: iso
+	$(PY) tools/test_iso.py --iso $(ISO) --image $(IMG) --kernel $(KERNEL_ELF)
 
 test-sdk: image $(SDK_ARCHIVE)
 	$(PY) tools/test_sdk.py --kernel $(KERNEL_ELF) --sdk-dir $(SDK_DIR) --demo $(SDK_DEMO_ELF)

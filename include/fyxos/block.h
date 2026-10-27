@@ -1,9 +1,10 @@
 /*
  * FYXOS — 块设备层
  *
- * 当前后端是自研 ATA PIO 驱动；对上层只暴露固定 512 字节扇区读写与
- * flush，不让文件系统依赖具体总线或端口。后续 AHCI/NVMe/VirtIO 可实现
- * 同一接口。
+ * 后端是自研 ATA PIO 与 ATAPI Live CD 驱动；对上层只暴露固定 512 字节
+ * 扇区读写与 flush，不让文件系统依赖具体总线或端口。Live CD 的写入进入
+ * RAM overlay，可通过 block_is_volatile() 查询其易失性。后续 AHCI/NVMe/
+ * VirtIO 可实现同一接口。
  */
 #ifndef FYXOS_BLOCK_H
 #define FYXOS_BLOCK_H
@@ -25,6 +26,7 @@ int  block_read(u64 lba, void *buf, size_t count);
 int  block_write(u64 lba, const void *buf, size_t count);
 int  block_flush(void);
 bool block_present(void);
+bool block_is_volatile(void);
 u64  block_sector_count(void);
 void block_get_stats(struct block_stats *out);
 

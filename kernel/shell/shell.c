@@ -944,7 +944,7 @@ static int cmd_df(int argc, char **argv)
             (unsigned long long)st.generation, st.active_root);
     kprintf("  块区: 追加分配 %u / %u（每块 4 KiB）\n",
             st.next_block, st.total_blocks);
-    kprintf("  节点 %u，快照 %u；ATA 读/写 %llu/%llu 扇区，flush %llu，错误 %llu\n",
+    kprintf("  节点 %u，快照 %u；块设备读/写 %llu/%llu 扇区，flush %llu，错误 %llu\n",
             st.nodes, st.snapshots,
             (unsigned long long)io.read_sectors,
             (unsigned long long)io.write_sectors,
@@ -968,7 +968,8 @@ static int cmd_sync(int argc, char **argv)
     UNUSED(argv);
     int rc = vfs_sync();
     if (rc == 0)
-        kprintf("已同步到 ATA 介质\n");
+        kprintf("%s\n", block_is_volatile() ? "已同步到 Live RAM overlay" :
+                "已同步到 ATA 介质");
     return rc != 0;
 }
 

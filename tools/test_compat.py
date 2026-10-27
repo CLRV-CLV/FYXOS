@@ -97,13 +97,15 @@ def inspect_gzip_package(package: Path, installed_elf: Path) -> tuple[int, int]:
     return len(payload), binascii.crc32(payload) & 0xFFFFFFFF
 
 
-def inspect_plain_package(package: Path) -> None:
+def inspect_plain_package(package: Path) -> tuple[int, int]:
     members = ar_members(package.read_bytes())
     if set(members) != {"debian-binary", "control.tar", "data.tar"}:
         raise RuntimeError("plain DEB does not contain uncompressed tar members")
     control_fields(tar_bytes(members, "control"))
-    if one_tar_file(tar_bytes(members, "data"), "./etc/fyx-deb-plain-ok") != b"UNCOMPRESSED_DEB_OK\n":
+    note = one_tar_file(tar_bytes(members, "data"), "./etc/fyx-deb-plain-ok")
+    if note != b"UNCOMPRESSED_DEB_OK\n":
         raise RuntimeError("plain DEB note differs")
+    return len(note), binascii.crc32(note) & 0xFFFFFFFF
 
 
 def inspect_bad_package(package: Path) -> None:
@@ -238,6 +240,9 @@ def run_guest(kernel: Path, image: Path, output: Path, mode: str = "quick",
         "stat /etc/fyx-deb-plain-ok",
         "deb /packages/fyx-deb-plain-demo.deb",
         "cat /etc/fyx-deb-plain-ok",
+        "cp /etc/fyx-deb-plain-ok /tmp/fyx-deb-plain-copy",
+        "stat /etc/fyx-deb-plain-ok",
+        "stat /tmp/fyx-deb-plain-copy",
         "deb /packages/fyx-deb-demo.deb",
         "stat /usr/bin/fyx-deb-demo",
         "run linux /usr/bin/fyx-deb-demo",
@@ -288,7 +293,7 @@ def main() -> int:
     try:
         payload_size, payload_crc = inspect_gzip_package(args.package, args.payload)
         check("gzip DEB 三成员、control 与包内未修改 ELF 逐字节一致", True)
-        inspect_plain_package(args.plain_package)
+        plain_size, plain_crc = inspect_plain_package(args.plain_package)
         check("未压缩 DEB 保留原始 control.tar/data.tar 与目标内容", True)
         inspect_bad_package(args.bad_package)
         check("负向 DEB 确实是 control 合法但 data CRC32 损坏的 gzip 包", True)
@@ -317,9 +322,14 @@ def main() -> int:
     check("损坏 gzip CRC32 返回 EIO 且目标文件在安装前不存在",
           "deb: 安装失败：/packages/fyx-deb-bad-gzip.deb（错误 -7）" in bad_segment and
           "stat: 错误 -8" in bad_segment)
+    # 控制台环形日志偶尔会出现 NUL/坏 UTF-8；用 guest 实际读回并复制后的
+    # 两份尺寸+CRC32 验证内容，不把单次终端打印损伤误判为 DEB 数据错误。
+    plain_stat = rf"/etc/fyx-deb-plain-ok: node=\d+ type=file size={plain_size} crc32=0x{plain_crc:08x}"
+    copy_stat = rf"/tmp/fyx-deb-plain-copy: node=\d+ type=file size={plain_size} crc32=0x{plain_crc:08x}"
     check("guest 未压缩 DEB 安装并读出原内容",
           "INSTALL_OK package=fyx-deb-plain-demo version=1.0-1 files=1 bytes=20 arch=amd64 format=plain" in text and
-          "UNCOMPRESSED_DEB_OK" in text)
+          re.search(plain_stat, text) is not None and
+          re.search(copy_stat, text) is not None)
     install_ok = (f"INSTALL_OK package=fyx-deb-demo version=1.0-1 files=1 "
                   f"bytes={payload_size} arch=amd64 format=gzip") in text
     stat_pattern = rf"/usr/bin/fyx-deb-demo: node=\d+ type=file size={payload_size} crc32=0x{payload_crc:08x}"

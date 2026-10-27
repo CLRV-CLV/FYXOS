@@ -27,6 +27,13 @@ glibc ELF 与退出码 23 均在 quick 和完整 BIOS 路径验收；干净全�
 [`docs/design/win64-compat.md`](docs/design/win64-compat.md) 与
 [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md)。
 
+另有可导入 VMware 的 **`build/fyxos.iso` BIOS Live 成品**：`make iso` 即可生成，
+不需要 xorriso/mkisofs，也不需要另加虚拟硬盘。自研 ATAPI 后端在脱离 BIOS 后
+直接读取光盘内的 FYXOS.IMG，FYXFS 写入进入 RAM overlay；完整 BIOS→ATAPI→
+ring3 双启动及易失性验收为 **10 PASS / 0 FAIL**。VMware 设置和 IDE/BGA/网卡
+边界见 [`docs/vmware-live.md`](docs/vmware-live.md)；尚未在真实 VMware 中实测，
+也不宣称支持 UEFI 或 Live 修改持久保存。
+
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
 
@@ -50,6 +57,8 @@ python3 -m venv .venv && .venv/bin/pip install unicorn
 
 # 2. 构建可启动镜像与开源 GCC C11 SDK
 make image          # build/fyxos.img；预装 /bin/gcc-c11-demo
+make iso            # build/fyxos.iso；VMware Legacy BIOS Live 试用
+make test-iso       # ISO 结构、ATAPI 完整启动、Live 写入与重启易失性
 make sdk            # build/fyxos-sdk/ 与 build/fyxos-sdk.tar.gz
 ./build/fyxos-sdk/bin/fyx-gcc sdk/examples/c11-demo.c -o build/my-demo.elf
 # 可选：把自己的 GCC ELF 预装进新镜像（guest 路径仍为 /bin/gcc-c11-demo）
@@ -107,7 +116,7 @@ run win64 /bin/win64-demo.exe
 | 系统调用 | `kernel/sys/` | SYSCALL/SYSRET，38 个原生调用＋Linux/Win32 独立分表，每线程独立系统调用栈 |
 | 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`pe_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF/PE32+ |
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
-| ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
+| ATA/ATAPI 块设备 | `kernel/drivers/ata.c` | ATA IDENTIFY/LBA28 PIO/FLUSH；ATAPI PACKET/READ(10) Live CD 与 RAM overlay |
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
 | BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
@@ -127,13 +136,14 @@ run win64 /bin/win64-demo.exe
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
 | 内核 Shell | `kernel/shell/shell.c` | 66 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、deb、git、resolve/ifconfig/ping 与跨系统子集别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
-| 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
-| 镜像工具 | `tools/mkimage.py` | 生成 32 MiB 磁盘镜像 |
+| 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA/只读 ATAPI + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
+| 镜像工具 | `tools/mkimage.py`、`tools/mkiso.py` | 生成 32 MiB 磁盘镜像与自包含 ISO9660/El Torito Live ISO |
 
 ### 自动化验收
 
 ```bash
-make test           # 101 项：原 80 项 + Win64/Linux/DEB 兼容 21 项
+make test           # 既有 101 项 + ISO 结构/双启动/Live 易失性 10 项
+make test-iso       # 只重跑 ISO/ATAPI 专项（10 项）
 make test-sdk      # GCC 独立编译、ELF64 W^X、预装示例 ring3 运行
 make test-compat   # 两种 DEB、Win64、负例、退出码及 quick/full-boot CRC 回归
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP

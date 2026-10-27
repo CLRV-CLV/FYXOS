@@ -71,8 +71,8 @@ static int install_initial_files(void)
             kprintf("[storage] 安装 /bin/init 失败：%d\n", rc);
             return rc;
         }
-        kprintf("[storage] 已把 init 安装到持久化 /bin/init（%u 字节）\n",
-                (unsigned)size);
+        kprintf("[storage] 已把 init 安装到%s/bin/init（%u 字节）\n",
+                block_is_volatile() ? "Live " : "持久化 ", (unsigned)size);
     }
 
     if (vfs_stat("/bin/gcc-c11-demo", &st) != FYX_OK) {
@@ -203,7 +203,7 @@ int storage_init(void)
 {
     int rc = block_init();
     if (rc != 0) {
-        kprintf("[storage] ATA 初始化失败：%d\n", rc);
+        kprintf("[storage] ATA/ATAPI 块设备初始化失败：%d\n", rc);
         return rc;
     }
     rc = find_system_partition();
@@ -242,8 +242,9 @@ int storage_init(void)
 
     struct fyxfs_stats stats;
     vfs_stats(&stats);
-    kprintf("[storage] 持久化文件系统就绪：%u 节点，generation=%llu，"
-            "已分配 %u/%u 块\n", stats.nodes,
+    kprintf("[storage] %s文件系统就绪：%u 节点，generation=%llu，"
+            "已分配 %u/%u 块\n",
+            block_is_volatile() ? "Live RAM overlay " : "持久化", stats.nodes,
             (unsigned long long)stats.generation,
             stats.next_block, stats.total_blocks);
     return FYX_OK;

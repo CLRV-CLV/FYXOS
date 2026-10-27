@@ -21,7 +21,7 @@
 | E | Unicorn 测试台：假 BIOS + 全链路实跑验证 | ✅ 完成 |
 | F | 生态规格与远景设计（本目录） | ✅ 完成 |
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
-| H | 存储与文件系统 | ✅ 核心完成（ATA/FYXFS/VFS/断电测试） |
+| H | 存储与文件系统 | ✅ 核心完成（ATA/ATAPI Live/FYXFS/VFS/断电测试） |
 | I | 网络栈 | 🟡 IPv4/UDP、DNS A 与 TCP 主动客户端 v1；IPv6/TLS/完整 TCP 待办 |
 | J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 BGA 软件桌面核心完成；完整 FyxWay/FyxUI 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
@@ -83,9 +83,12 @@ ring 3 启动；独立 PML4、用户栈/argv/envp/auxv、每线程系统调用�
 
 **当前实现（已实跑通过）**：自研 ATA PIO、MBR 系统分区、FYXFS v1、VFS
 文件对象及 6 个文件系统调用均已落地；`make test-storage` 验证跨重启、
-卸载/挂载和 4 个 ATA 写点断电。当前是固定 40 节点/16 快照的追加式 CoW 根，
-尚未完成旧块回收、B 树、压缩/去重、GPT、AHCI/NVMe 及 proc/sys/dev/tmpfs。
-详见 [`docs/design/fyxfs.md`](design/fyxfs.md)。
+卸载/挂载和 4 个 ATA 写点断电。另有 ISO9660/El Torito BIOS Live ISO 与
+ATAPI READ(10) 后端，光盘内嵌 FYXOS.IMG 直接作为系统分区，写入进入 RAM
+overlay；`make test-iso` 验证完整双启动、重挂读回和重启易失性。当前是固定
+40 节点/16 快照的追加式 CoW 根，尚未完成旧块回收、B 树、压缩/去重、GPT、
+AHCI/NVMe、SATA 光驱及 proc/sys/dev/tmpfs。详见
+[`docs/design/fyxfs.md`](design/fyxfs.md) 与 [`docs/vmware-live.md`](vmware-live.md)。
 
 ### 阶段 I — 网络栈
 
