@@ -12,6 +12,10 @@
 
 ## 当前交付：FYXOS Developer Preview（自研内核＋开源 GCC C11 SDK）✅
 
+首个成品包见 [`release/RELEASE_NOTES.md`](release/RELEASE_NOTES.md)：包含压缩启动
+镜像、SDK、SHA256 和 full-boot/自定义应用/80 项全量测试日志；对应预发布标签为
+`v0.1.0-dev1`。
+
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
 

@@ -1,0 +1,455 @@
+gcc -m32 -x assembler-with-cpp -I boot -c -o build/stage1.o boot/stage1.S
+ld -m elf_i386 -T boot/stage1.ld --oformat=binary -o build/stage1.bin build/stage1.o
+  AS+LD   build/stage1.bin (512 bytes)
+gcc -m32 -x assembler-with-cpp -I boot -MMD -MP -c -o build/boot/stage2_16.o boot/stage2_16.S
+gcc -m32 -x assembler-with-cpp -I boot -MMD -MP -c -o build/boot/stage2_32.o boot/stage2_32.S
+gcc -std=gnu11 -ffreestanding -fno-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m32 -fno-pic -fno-omit-frame-pointer -Wa,--noexecstack -Os -g -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -Iboot -MMD -MP -c -o build/boot/stage2_32c.o boot/stage2_32.c
+ld -m elf_i386 -T boot/stage2.ld --oformat=binary -o build/stage2.bin build/boot/stage2_16.o build/boot/stage2_32.o build/boot/stage2_32c.o
+  LD      build/stage2.bin
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/cpu.o kernel/arch/x86_64/cpu.c
+  CC      kernel/arch/x86_64/cpu.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/gdt.o kernel/arch/x86_64/gdt.c
+  CC      kernel/arch/x86_64/gdt.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/idt.o kernel/arch/x86_64/idt.c
+  CC      kernel/arch/x86_64/idt.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/keyboard.o kernel/arch/x86_64/keyboard.c
+  CC      kernel/arch/x86_64/keyboard.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/pic.o kernel/arch/x86_64/pic.c
+  CC      kernel/arch/x86_64/pic.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/pit.o kernel/arch/x86_64/pit.c
+  CC      kernel/arch/x86_64/pit.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/serial.o kernel/arch/x86_64/serial.c
+  CC      kernel/arch/x86_64/serial.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/vga.o kernel/arch/x86_64/vga.c
+  CC      kernel/arch/x86_64/vga.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/core/console.o kernel/core/console.c
+  CC      kernel/core/console.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/core/main.o kernel/core/main.c
+  CC      kernel/core/main.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/core/panic.o kernel/core/panic.c
+  CC      kernel/core/panic.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/drivers/ata.o kernel/drivers/ata.c
+  CC      kernel/drivers/ata.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/drivers/bga.o kernel/drivers/bga.c
+  CC      kernel/drivers/bga.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/drivers/rtl8139.o kernel/drivers/rtl8139.c
+  CC      kernel/drivers/rtl8139.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/fs/fyxfs.o kernel/fs/fyxfs.c
+  CC      kernel/fs/fyxfs.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/fs/storage.o kernel/fs/storage.c
+  CC      kernel/fs/storage.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/fs/vfs.o kernel/fs/vfs.c
+  CC      kernel/fs/vfs.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/gfx/desktop.o kernel/gfx/desktop.c
+  CC      kernel/gfx/desktop.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/gfx/gfx.o kernel/gfx/gfx.c
+  CC      kernel/gfx/gfx.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/git/fyxgit.o kernel/git/fyxgit.c
+  CC      kernel/git/fyxgit.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/ide/ide.o kernel/ide/ide.c
+  CC      kernel/ide/ide.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/lib/printf.o kernel/lib/printf.c
+  CC      kernel/lib/printf.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/lib/string.o kernel/lib/string.c
+  CC      kernel/lib/string.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/mm/heap.o kernel/mm/heap.c
+  CC      kernel/mm/heap.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/mm/pmm.o kernel/mm/pmm.c
+  CC      kernel/mm/pmm.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/mm/vmm.o kernel/mm/vmm.c
+  CC      kernel/mm/vmm.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/net/dns.o kernel/net/dns.c
+  CC      kernel/net/dns.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/net/net.o kernel/net/net.c
+  CC      kernel/net/net.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/net/socket.o kernel/net/socket.c
+  CC      kernel/net/socket.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sched/sched.o kernel/sched/sched.c
+  CC      kernel/sched/sched.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/shell/shell.o kernel/shell/shell.c
+  CC      kernel/shell/shell.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/elf_load.o kernel/sys/elf_load.c
+  CC      kernel/sys/elf_load.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/file_syscall.o kernel/sys/file_syscall.c
+  CC      kernel/sys/file_syscall.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/pipe.o kernel/sys/pipe.c
+  CC      kernel/sys/pipe.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/process.o kernel/sys/process.c
+  CC      kernel/sys/process.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/syscall.o kernel/sys/syscall.c
+  CC      kernel/sys/syscall.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/tests/selftest.o kernel/tests/selftest.c
+  CC      kernel/tests/selftest.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/toolchain/fyxcc.o kernel/toolchain/fyxcc.c
+  CC      kernel/toolchain/fyxcc.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/toolchain/fyxjs.o kernel/toolchain/fyxjs.c
+  CC      kernel/toolchain/fyxjs.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/entry.o kernel/arch/x86_64/entry.S
+  AS      kernel/arch/x86_64/entry.S
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/arch/x86_64/isr.o kernel/arch/x86_64/isr.S
+  AS      kernel/arch/x86_64/isr.S
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sched/switch.o kernel/sched/switch.S
+  AS      kernel/sched/switch.S
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -static -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -fomit-frame-pointer -m64 -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -O2 -g -Wa,--noexecstack -Iuser -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -c -o build/user/init.o user/init.c
+  CC      user/init.c
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -static -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -fomit-frame-pointer -m64 -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -O2 -g -Wa,--noexecstack -Iuser -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -c -o build/user/start.o user/start.S
+  AS      user/start.S
+ld -m elf_x86_64 -nostdlib -z max-page-size=0x1000 -T user/user.ld -o build/user/init.elf build/user/init.o build/user/start.o
+  LD      build/user/init.elf
+.venv/bin/python tools/mksdk.py --output build/fyxos-sdk --archive build/fyxos-sdk.tar.gz \
+                     --demo build/sdk/c11-demo.elf --hello build/sdk/hello.elf
++ gcc -ffreestanding -fno-pie -fno-stack-protector -m64 -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -Wa,--noexecstack -c /home/user/FYXOS/user/start.S -o /home/user/FYXOS/build/fyxos-sdk/lib/crt0.o
++ /home/user/FYXOS/build/fyxos-sdk/bin/fyx-gcc -c /home/user/FYXOS/build/fyxos-sdk/lib/minilibc.c -o /home/user/FYXOS/build/fyxos-sdk/lib/minilibc.o
++ ar rcs /home/user/FYXOS/build/fyxos-sdk/lib/libfyx.a /home/user/FYXOS/build/fyxos-sdk/lib/minilibc.o
++ /home/user/FYXOS/build/fyxos-sdk/bin/fyx-gcc /home/user/FYXOS/build/fyxos-sdk/examples/c11-demo.c -o build/sdk/c11-demo.elf
++ /home/user/FYXOS/build/fyxos-sdk/bin/fyx-gcc /home/user/FYXOS/build/fyxos-sdk/examples/hello.c -o build/sdk/hello.elf
+SDK: /home/user/FYXOS/build/fyxos-sdk
+Archive: build/fyxos-sdk.tar.gz
+C11 demo: build/sdk/c11-demo.elf
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/init_image.o kernel/sys/init_image.S
+  AS      kernel/sys/init_image.S
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/syscall_entry.o kernel/sys/syscall_entry.S
+  AS      kernel/sys/syscall_entry.S
+gcc -std=gnu11 -ffreestanding -fno-pie -no-pie -fno-stack-protector -fno-builtin -fno-common -fno-asynchronous-unwind-tables -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-avx -fno-omit-frame-pointer -O2 -g -Wa,--noexecstack -Iinclude -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wshadow -Wpointer-arith -Wstrict-prototypes -Wmissing-prototypes -Wcast-align -Wwrite-strings -Wredundant-decls -Wnested-externs -MMD -MP -c -o build/kernel/sys/usermode.o kernel/sys/usermode.S
+  AS      kernel/sys/usermode.S
+ld -m elf_x86_64 -nostdlib -z max-page-size=0x1000 -T kernel/linker.ld -o build/fyxos.elf build/kernel/arch/x86_64/cpu.o build/kernel/arch/x86_64/gdt.o build/kernel/arch/x86_64/idt.o build/kernel/arch/x86_64/keyboard.o build/kernel/arch/x86_64/pic.o build/kernel/arch/x86_64/pit.o build/kernel/arch/x86_64/serial.o build/kernel/arch/x86_64/vga.o build/kernel/core/console.o build/kernel/core/main.o build/kernel/core/panic.o build/kernel/drivers/ata.o build/kernel/drivers/bga.o build/kernel/drivers/rtl8139.o build/kernel/fs/fyxfs.o build/kernel/fs/storage.o build/kernel/fs/vfs.o build/kernel/gfx/desktop.o build/kernel/gfx/gfx.o build/kernel/git/fyxgit.o build/kernel/ide/ide.o build/kernel/lib/printf.o build/kernel/lib/string.o build/kernel/mm/heap.o build/kernel/mm/pmm.o build/kernel/mm/vmm.o build/kernel/net/dns.o build/kernel/net/net.o build/kernel/net/socket.o build/kernel/sched/sched.o build/kernel/shell/shell.o build/kernel/sys/elf_load.o build/kernel/sys/file_syscall.o build/kernel/sys/pipe.o build/kernel/sys/process.o build/kernel/sys/syscall.o build/kernel/tests/selftest.o build/kernel/toolchain/fyxcc.o build/kernel/toolchain/fyxjs.o build/kernel/arch/x86_64/entry.o build/kernel/arch/x86_64/isr.o build/kernel/sched/switch.o build/kernel/sys/init_image.o build/kernel/sys/syscall_entry.o build/kernel/sys/usermode.o
+  LD      build/fyxos.elf
+.venv/bin/python tools/mkimage.py --stage1 build/stage1.bin \
+                       --stage2 build/stage2.bin \
+                       --kernel build/fyxos.elf \
+                       --out build/fyxos.img
+  镜像 build/fyxos.img：33554432 字节 (65536 扇区)
+.venv/bin/python tools/fyxemu.py --image build/fyxos.img --kernel build/fyxos.elf --mode full-boot --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output build/full-desktop.png --test --max-seconds 90
+[fyxemu] 阶段 1 完成：BIOS 引导 -> 长模式，入口 RIP=0xffffffff80000000, CR3=0x50000
+
+  ███████╗██╗   ██╗██╗  ██╗ ██████╗ ███████╗
+  █���╔════╝╚██╗ ██╔╝╚██╗██╔╝██╔═══██╗██╔════╝
+  █████╗   ╚███���╔╝  ╚███╔╝ ██║   ██║███████╗
+  ██╔══╝    ╚██╔╝   ██╔██╗ ██║   ██║��════██║
+  ██║        ██║   ██╔╝ ██╗╚██████╔╝███████║
+  ╚═╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+
+  FYXOS 0.1.0-phase1 (kernel-core) — 全程自研内核，无���有内核依赖
+  架构 x86-64 | 内核入口 0xffffffff80000000 | 内核结束 0xffffffff8005f000
+
+[cpu] GenuineIntel family 6 model 60 stepping 4
+  vendor="GenuineIntel" family=6 model=60 stepping=4
+  特性: msr=1 tsc=1 syscall=1 nx=1 pge=1 1G=0 sse2=1 avx=0
+  物理地址位宽 40  虚拟地址位宽 48
+
+[boot] 引导信息
+  boot_info @ 0xffff800000005000  magic=0x31585946 version=1
+  引导驱动器 0x80  可用内存 65151 KiB (66714624 字节)
+  内核映像 phys=[0x200000, 0x25f000) virt=0xffffffff80000000
+  HHDM 窗口基址 0xffff800000000000
+  E820 内存映射（4 项）：
+    [ 0] 0x0000000000000000 - 0x000000000009fbff  usable  
+    [ 1] 0x000000000009fc00 - 0x000000000009ffff  reserved
+    [ 2] 0x00000000000f0000 - 0x00000000000fffff  reserved
+    [ 3] 0x0000000000100000 - 0x0000000003ffffff  usable  
+
+[mem] 物理内存 65148 KiB 中可用 61664 KiB（15513 帧）
+[mem] 内核堆 1024 KiB，已用 0 KiB
+
+[test] 运行内核自检...
+  [string] ... ok
+  [printf] ... ok
+  [cpu] ... ok
+  [pmm] ... ok
+  [vmm] ... ok
+  [heap] ... ok
+  [syscall] ... ok
+  [console] ...selftest-console ok
+  [crc32] ... ok
+[test] 自检全部通过（失败 0 项）
+
+[sched] ��动两个抢占式内核线程做轮转演示...
+  demo-a 计数=200  demo-b 计数=200  完成标志=0x3
+  -> 两个线程交替推进即证明抢占式调度与上下文切换正常
+[block] ATA PIO 就绪：65536 扇区（32 MiB）
+[storage] 系统分区 LBA=2048，扇区数=63488
+[storage] 超级块槽全零，初始化新的 FYXFS 卷
+[fyxfs] 格式化完成：7934 个 4KiB 块
+[fyxfs] 挂载成功：generation=1 root=0 next=1/7934 slot=1
+[storage] 已把 init 安装到持久化 /bin/init（41952 字节）
+[storage] 已把 GCC C11 示例安装到 /bin/gcc-c11-demo（17544 字节）
+[fsck] 校验通过：节点=13 快照=0 ��误=0
+[storage] 持久化文件系统���绪：13 节点，generation=16，已分配 33/7934 块
+[net] RTL8139 PCI 设备就绪：I/O=0xc000 MAC=52:54:00:12:34:56
+[net] DHCP 完成：IP=10.0.2.15 网关=10.0.2.2 掩码=255.255.255.0 DNS=10.0.2.2
+[net] ARP 网关 10.0.2.2 -> 52:54:00:65:02:02
+[net] ICMP 网关往返成功：0 ms
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef90 argc=1
+[proc] init 就绪：pid=1 entry=0x400e37
+
+[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令
+fyxos> 
+[init] === FYXOS 用户态已启动（ring 3）===
+[init] pid=1 ppid=0 tid=4
+[init] argc=1 argv[0]=init envp[0]=FYXOS=1
+[init] ring3 UDP socket 通过：DHCP/ARP/IPv4/UDP 收发一致
+[init] ring3 TCP socket 通过：SYN/RST/checksum/分段读取/FIN-EOF 一致
+[init] FYXFS 文件读写与 seek ✓ 内容一致，/bin/init stat 正常
+[init] fork...
+[proc] fork: 1 -> 2（init）
+[init] fork 返回 2[child] fork 返回 0 —— 我是子进程，pid= —— 我是父进程
+2 ppid=1
+[child] 通过管道发送 pipe-ok
+[child] 执行 exec...
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef80 argc=2
+[exec] 新程序已启动，argv[1]=--execed，退出码 7
+[proc] exit: pid=2 code=7
+[init] wait 回收 pid=2 退出码=7  ✓ 与子进程一致
+[init] pipe 收到 pipe-ok  ✓ 内容一致
+[init] 经过 24 个 tick 的忙等，期间被时钟抢占后已正确恢复
+[init] brk 268435456 -> 268443648  ✓ 堆已增长
+
+[init] 全部通过，返回内核 Shell
+[proc] exit: pid=1 code=0
+desktop
+[gfx] BGA LFB 800x600x32 phys=0xe0000000 pitch=3200
+[gfx] 软件背 buffer phys=0x391000，1876 KiB；像素格式 BGRX8888
+[desktop] frame=1 focus=WELCOME theme=dark checksum=0x3ae5f32e
+fyxos> desktop next
+[desktop] frame=2 focus=NETWORK theme=dark checksum=0x9965f573
+fyxos> desktop theme
+[desktop] frame=3 focus=NETWORK theme=light checksum=0x619aea2c
+fyxos> desktop info
+[desktop] windows=3 focus=NETWORK theme=light frames=3 blit=5625 KiB checksum=0x619aea2c
+  背 buffer phys=0x391000，绘制调用=226767，像素=3609153
+fyxos> ifconfig
+eth0: UP
+  MAC  52:54:00:12:34:56
+  IPv4 10.0.2.15  掩码 255.255.255.0  网关 10.0.2.2
+  DNS  10.0.2.2
+  网关 MAC 52:54:00:65:02:02 (已解析)
+  RX=11 TX=12 错误=0 ARP请求=1 ARP回应=1 ICMP回应=1 UDP收/发/丢=1/1/1
+  TCP收/发/丢=4/7/1
+fyxos> ping
+ping 10.0.2.2: ICMP echo 回复，time=0 ms
+fyxos> shutdown
+  关机。
+共执行 7 条命令
+
+[shell] 退出，系统停机
+[fyxemu] framebuffer 已保存到 build/full-desktop.png（800x600，checksum=0x619aea2c）
+[fyxemu] 内核请求停机：正常关机
+
+================ 自动化检查 ================
+  [PASS] 内核启动横幅
+  [PASS] 自检全部通过
+  [PASS] 调度演示完成
+  [PASS] ATA 与 FYXFS 挂载
+  [PASS] DHCP 地址配置
+  [PASS] ARP 下一跳解析
+  [PASS] ICMP 网关往返
+  [PASS] 从磁盘加载 init
+  [PASS] ring3 UDP socket
+  [PASS] ring3 TCP socket
+  [PASS] Shell ifconfig
+  [PASS] Shell ping
+  [PASS] 用户态启动
+  [PASS] 用户态文件系统调用
+  [PASS] fork 子进程返回 0
+  [PASS] exec 启动新程序
+  [PASS] wait 回收退出码
+  [PASS] 管道通信
+  [PASS] 用户态时钟与堆
+  [PASS] 未发生 panic
+  [PASS] BGA 800x600 LFB
+  [PASS] 软件背 buffer
+  [PASS] 桌面首帧
+  [PASS] 桌面焦点与主题重绘
+  [PASS] guest/host framebuffer 校验一致
+  注入时钟节拍 14643 次，中断共 15433 次，执行约 457097592 条指令
+============================================
+[fyxemu] 测试通过
+.venv/bin/python tools/fyxemu.py --kernel build/fyxos.elf --mode quick --keys "desktop;desktop next;desktop theme;desktop info;ifconfig;ping;shutdown" --keys-after "[init] 全部通过" --fb-output build/quick-desktop.png --test --max-seconds 90
+
+  ███████╗██╗   ██╗██╗  ██╗ ██████╗ ███████╗
+  █��╔════╝╚██╗ ██╔╝╚██╗██╔╝██╔═══██╗██╔════╝
+  █████╗   ╚███��╔╝  ╚███╔╝ ██║   ██║███████╗
+  ██╔══╝    ╚██╔╝   ██╔██╗ ██║   ██║╚════██║
+  ██║        ██║   ██╔╝ ██╗╚██████╔╝███████║
+  ╚═╝        ╚═╝   ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
+
+  FYXOS 0.1.0-phase1 (kernel-core) — 全程自研内核，无���有内核依赖
+  架构 x86-64 | 内核入口 0xffffffff80000000 | 内核结束 0xffffffff8005f000
+
+[cpu] GenuineIntel family 6 model 60 stepping 4
+  vendor="GenuineIntel" family=6 model=60 stepping=4
+  特性: msr=1 tsc=1 syscall=1 nx=1 pge=1 1G=0 sse2=1 avx=0
+  物理地址位宽 40  虚拟地址位宽 48
+
+[boot] 引导信息
+  boot_info @ 0xffff800000005000  magic=0x31585946 version=1
+  引导驱动器 0x80  可用内存 65536 KiB (67108864 字节)
+  内核映像 phys=[0x200000, 0x200000) virt=0xffffffff80000000
+  HHDM 窗口基址 0xffff800000000000
+  E820 内存映射（2 项）：
+    [ 0] 0x0000000000000000 - 0x000000000009fbff  usable  
+    [ 1] 0x0000000000100000 - 0x0000000003ffffff  usable  
+
+[mem] 物���内存 65148 KiB 中可用 61664 KiB（15513 帧）
+[mem] 内核堆 1024 KiB，已用 0 KiB
+
+[test] 运行内核自检...
+  [string] ... ok
+  [printf] ... ok
+  [cpu] ... ok
+  [pmm] ... ok
+  [vmm] ... ok
+  [heap] ... ok
+  [syscall] ... ok
+  [console] ...selftest-console ok
+  [crc32] ... ok
+[test] 自检全部通过（失败 0 项）
+
+[sched] 启动两个抢��式内核线程做轮转演示...
+  demo-a 计数=200  demo-b 计数=200  完成标志=0x3
+  -> 两个线程交替推进即证明抢占式调度与上下文切换正常
+[block] ATA PIO 就绪：65536 扇区（32 MiB）
+[storage] 系统分区 LBA=2048，扇区数=63488
+[storage] 超级块槽全零，初始化新的 FYXFS 卷
+[fyxfs] 格式化完成：7934 个 4KiB 块
+[fyxfs] 挂载成功：generation=1 root=0 next=1/7934 slot=1
+[storage] 已把 init 安装到持久化 /bin/init（41952 字节）
+[storage] 已把 GCC C11 示例安装到 /bin/gcc-c11-demo（17544 字节）
+[fsck] 校验通过：节点=13 快照=0 ��误=0
+[storage] 持久化文件系统���绪：13 节点，generation=16，已分配 33/7934 块
+[net] RTL8139 PCI 设备就绪：I/O=0xc000 MAC=52:54:00:12:34:56
+[net] DHCP 完成：IP=10.0.2.15 网关=10.0.2.2 掩码=255.255.255.0 DNS=10.0.2.2
+[net] ARP 网关 10.0.2.2 -> 52:54:00:65:02:02
+[net] ICMP 网关往返成功：0 ms
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef90 argc=1
+[proc] init 就绪：pid=1 entry=0x400e37
+
+[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令
+fyxos> 
+[init] === FYXOS 用户态已启动（ring 3）===
+[init] pid=1 ppid=0 tid=4
+[init] argc=1 argv[0]=init envp[0]=FYXOS=1
+[init] ring3 UDP socket 通过：DHCP/ARP/IPv4/UDP 收发一致
+[init] ring3 TCP socket 通过：SYN/RST/checksum/分段读取/FIN-EOF 一致
+[init] FYXFS 文件读写与 seek ✓ 内容一致，/bin/init stat 正常
+[init] fork...
+[proc] fork: 1 -> 2（init）
+[init] fork 返回 2[child] fork 返回 0 —— 我是子进程，pid= —— 我是父进程
+2 ppid=1
+[child] 通过管道发送 pipe-ok
+[child] 执行 exec...
+[proc] 从 /bin/init 读取可执行映像（41952 字节）
+[proc] 装载 init：entry=0x400e37 brk=0x10000000 栈顶=0x7fffef80 argc=2
+[exec] 新程序已启动，argv[1]=--execed，退出码 7
+[proc] exit: pid=2 code=7
+[init] wait 回收 pid=2 退出码=7  ✓ 与子进程一致
+[init] pipe 收到 pipe-ok  ✓ 内容一致
+[init] 经过 24 个 tick 的忙等，期间被时钟抢占后已正确恢复
+[init] brk 268435456 -> 268443648  ✓ 堆已增长
+
+[init] 全部通过，返回内核 Shell
+[proc] exit: pid=1 code=0
+desktop
+[gfx] BGA LFB 800x600x32 phys=0xe0000000 pitch=3200
+[gfx] 软件背 buffer phys=0x391000，1876 KiB；像素格式 BGRX8888
+[desktop] frame=1 focus=WELCOME theme=dark checksum=0x3ae5f32e
+fyxos> desktop next
+[desktop] frame=2 focus=NETWORK theme=dark checksum=0x9965f573
+fyxos> desktop theme
+[desktop] frame=3 focus=NETWORK theme=light checksum=0x619aea2c
+fyxos> desktop info
+[desktop] windows=3 focus=NETWORK theme=light frames=3 blit=5625 KiB checksum=0x619aea2c
+  背 buffer phys=0x391000，绘制调用=226767，像素=3609153
+fyxos> ifconfig
+eth0: UP
+  MAC  52:54:00:12:34:56
+  IPv4 10.0.2.15  掩码 255.255.255.0  网关 10.0.2.2
+  DNS  10.0.2.2
+  网关 MAC 52:54:00:65:02:02 (已解析)
+  RX=11 TX=12 错误=0 ARP请求=1 ARP回应=1 ICMP回应=1 UDP收/发/丢=1/1/1
+  TCP收/发/丢=4/7/1
+fyxos> ping
+ping 10.0.2.2: ICMP echo 回复，time=0 ms
+fyxos> shutdown
+  关机。
+共执行 7 条命令
+
+[shell] 退出，系统停机
+[fyxemu] framebuffer 已保存到 build/quick-desktop.png（800x600，checksum=0x619aea2c）
+[fyxemu] 内核请求停机：正常关机
+
+================ 自动化检查 ================
+  [PASS] 内核启动横幅
+  [PASS] 自检全部通过
+  [PASS] 调度演示完成
+  [PASS] ATA 与 FYXFS 挂载
+  [PASS] DHCP 地址配置
+  [PASS] ARP 下一跳解析
+  [PASS] ICMP 网关往返
+  [PASS] 从磁盘加载 init
+  [PASS] ring3 UDP socket
+  [PASS] ring3 TCP socket
+  [PASS] Shell ifconfig
+  [PASS] Shell ping
+  [PASS] 用户态启动
+  [PASS] 用户态文件系统调用
+  [PASS] fork 子进程返回 0
+  [PASS] exec 启动新程序
+  [PASS] wait 回收退出码
+  [PASS] 管道通信
+  [PASS] 用户态时钟与堆
+  [PASS] 未发生 panic
+  [PASS] BGA 800x600 LFB
+  [PASS] 软件背 buffer
+  [PASS] 桌面首帧
+  [PASS] 桌面焦点与主题重绘
+  [PASS] guest/host framebuffer 校验一致
+  注入时钟节拍 14644 次，中断共 15434 次，执行约 452060000 条指令
+============================================
+[fyxemu] 测试通过
+.venv/bin/python tools/test_sdk.py --kernel build/fyxos.elf --sdk-dir build/fyxos-sdk --demo build/sdk/c11-demo.elf
+  [PASS] 开源 GCC C11 SDK：独立编译、ELF64 W^X 与预装 ring3 运行
+.venv/bin/python tools/test_network.py --kernel build/fyxos.elf
+  [PASS] DHCP DNS、真实 UDP socket、错误 ID 过滤与压缩 A 记录
+  [PASS] DNS UDP 截断 → TCP 握手 → 长度前缀查询与 A 记录
+  [PASS] DNS UDP 重传、规范名 TTL 缓存与到期重新查询
+  [PASS] TCP SYN/数据重传与 UDP checksum 生成、坏帧丢弃
+  [PASS] NXDOMAIN、空答案、指针环路、非法名与超时诊断
+  [PASS] ping 主机名 → DNS A 查询 → ICMP 端到端
+DNS/网络专项：通过（0 个失败）
+.venv/bin/python tools/test_toolchain.py --kernel build/fyxos.elf
+  [PASS] C/FyxJS 重复编译、控制流、ring3 退出码 42、正/负向诊断
+  [PASS] C for/break/continue、嵌套 fixup、迭代路径与误用诊断
+  [PASS] C ++/--、+=/-=/*=/= 与惯用 for 迭代表达式
+  [PASS] C %/%=、移位、~、&/|/^ 与 C 表达式优先级
+  [PASS] C !、&&/|| 真实短路、0/1 归一化与优先级
+  [PASS] C do…while、循环尾条件 continue 与 ?: 单分支求值
+  [PASS] C switch/case/default、fallthrough、诊断与循环控制隔离
+  [PASS] C 自定义函数、栈传参、嵌套/递归调用与入口/返回诊断
+  [PASS] C 函数原型、前向调用、相互递归与声明/定义诊断
+  [PASS] FyxJS 多函数、参数、递归、词法边界与退出诊断
+  [PASS] IDE 空文件编辑→保存→编译→ring3 运行→PNG/校验和
+工具链/IDE 专项：通过（0 个失败）
+.venv/bin/python tools/test_git.py --image build/fyxos.img --kernel build/fyxos.elf
+  [PASS] init/add/commit/status/log/diff/restore 全链路
+  [PASS] 仓库数据库、提交父链和恢复内容跨重启保持
+FYXGit 专项：通过（0 个失败）
+.venv/bin/python tools/test_cli.py --image build/fyxos.img --kernel build/fyxos.elf
+  [PASS] 原生动词、别名、touch/冲突保护、原子 rename、build/run
+  [PASS] rename 后新旧路径、内容和文件系统校验跨重启保持
+CLI 专项：通过（0 个失败）
+.venv/bin/python tools/test_graphics.py --image build/fyxos.img --kernel build/fyxos.elf
+  [PASS] desktop run：N/T/R/Q 与四帧重绘
+  [PASS] PNG 800x600、非空像素、多种颜色（采样 45 色）
+  [PASS] 无 BGA 时保留救援 Shell 并正常关机
+图形专项：通过（0 个失败）
+.venv/bin/python tools/test_storage.py --image build/fyxos.img --kernel build/fyxos.elf
+  [PASS] 断电写点  1 -> 重启内容 original，fsck=0
+  [PASS] 断电写点  9 -> 重启内容 original，fsck=0
+  [PASS] 断电写点 16 -> 重启内容 original，fsck=0
+  [PASS] 断电写点 17 -> 重启内容 changed，fsck=0
+  [PASS] 跨重启持久化、CoW 快照、系统回滚且 /home 保留
+FYXFS 存储集成测试全部通过（日志：/home/user/FYXOS/build/storage-test）
