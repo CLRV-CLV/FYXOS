@@ -1,8 +1,8 @@
 /*
- * FYXOS — Debian binary package（ar + 未压缩 ustar）安装器
+ * FYXOS — Debian binary package（ar + ustar/gzip）安装器
  *
- * 严格边界：debian-binary 2.0、control.tar、data.tar、amd64、普通文件/目录。
- * 不支持压缩 tar、依赖求解、maintainer scripts、链接或 pax 扩展；这些输入
+ * 严格边界：debian-binary 2.0、control.tar[.gz]、data.tar[.gz]、amd64、
+ * 普通文件/目录。xz/zstd、依赖求解、maintainer scripts、链接或 pax 扩展
  * 必须报错，不能跳过之后声称安装成功。
  */
 #include <fyxos/deb.h>
@@ -10,6 +10,7 @@
 #include <fyxos/mm.h>
 #include <fyxos/lib.h>
 #include <fyxos/kernel.h>
+#include <fyxos/gzip.h>
 
 struct tar_header {
     char name[100];
@@ -331,7 +332,9 @@ int deb_install_image(const void *image, size_t size, const char *source_name)
 
     const u8 *control_tar = NULL, *data_tar = NULL;
     size_t control_size = 0, data_size = 0;
-    bool saw_version = false;
+    void *control_alloc = NULL, *data_alloc = NULL;
+    bool saw_version = false, saw_control = false, saw_data = false;
+    bool control_gzip = false, data_gzip = false;
     size_t offset = 8;
     while (offset < size) {
         if (size - offset < 60)
@@ -352,20 +355,24 @@ int deb_install_image(const void *image, size_t size, const char *source_name)
             if (saw_version || member_size != 4 || memcmp(data, "2.0\n", 4) != 0)
                 return -FYX_EINVAL;
             saw_version = true;
-        } else if (ar_name_equals((const char *)hdr, "control.tar")) {
-            if (control_tar)
+        } else if (ar_name_equals((const char *)hdr, "control.tar") ||
+                   ar_name_equals((const char *)hdr, "control.tar.gz")) {
+            if (saw_control)
                 return -FYX_EINVAL;
+            saw_control = true;
+            control_gzip = ar_name_equals((const char *)hdr, "control.tar.gz");
             control_tar = data;
             control_size = (size_t)member_size;
-        } else if (ar_name_equals((const char *)hdr, "data.tar")) {
-            if (data_tar)
+        } else if (ar_name_equals((const char *)hdr, "data.tar") ||
+                   ar_name_equals((const char *)hdr, "data.tar.gz")) {
+            if (saw_data)
                 return -FYX_EINVAL;
+            saw_data = true;
+            data_gzip = ar_name_equals((const char *)hdr, "data.tar.gz");
             data_tar = data;
             data_size = (size_t)member_size;
-        } else if (ar_name_equals((const char *)hdr, "control.tar.gz") ||
-                   ar_name_equals((const char *)hdr, "control.tar.xz") ||
+        } else if (ar_name_equals((const char *)hdr, "control.tar.xz") ||
                    ar_name_equals((const char *)hdr, "control.tar.zst") ||
-                   ar_name_equals((const char *)hdr, "data.tar.gz") ||
                    ar_name_equals((const char *)hdr, "data.tar.xz") ||
                    ar_name_equals((const char *)hdr, "data.tar.zst")) {
             return -FYX_ENOSYS;
@@ -379,21 +386,37 @@ int deb_install_image(const void *image, size_t size, const char *source_name)
             offset++;
         }
     }
-    if (!saw_version || !control_tar || !data_tar)
+    if (!saw_version || !saw_control || !saw_data)
         return -FYX_EINVAL;
+
+    int rc = 0;
+    if (control_gzip) {
+        rc = gzip_decompress(control_tar, control_size, &control_alloc,
+                             &control_size, 16u * 1024u * 1024u);
+        control_tar = control_alloc;
+    }
+    if (!rc && data_gzip) {
+        rc = gzip_decompress(data_tar, data_size, &data_alloc,
+                             &data_size, 16u * 1024u * 1024u);
+        data_tar = data_alloc;
+    }
+    if (rc) {
+        kprintf("[deb] gzip 解压失败：%s（错误 %d）\n", source_name, rc);
+        goto out;
+    }
 
     struct deb_control info;
     memset(&info, 0, sizeof(info));
-    int rc = validate_control(control_tar, control_size, &info);
+    rc = validate_control(control_tar, control_size, &info);
     if (rc != 0) {
         kprintf("[deb] control 校验失败：%s（错误 %d）\n", source_name, rc);
-        return rc;
+        goto out;
     }
     /* 第一遍完整验证数据 tar，第二遍才开始写文件。 */
     rc = process_data_tar(data_tar, data_size, false, NULL, NULL);
     if (rc != 0) {
         kprintf("[deb] data.tar 校验失败：%s（错误 %d）\n", source_name, rc);
-        return rc;
+        goto out;
     }
 
     u32 files = 0;
@@ -402,11 +425,20 @@ int deb_install_image(const void *image, size_t size, const char *source_name)
     if (rc != 0) {
         kprintf("[deb] 解包失败：%s（错误 %d；可能已有部分文件）\n",
                 source_name, rc);
-        return rc;
+        goto out;
     }
-    kprintf("[deb] 已安装 %s %s：%u 个文件，%llu 字节（amd64，未压缩）\n",
-            info.package, info.version, files, (unsigned long long)bytes);
-    return 0;
+    const char *format = control_gzip || data_gzip ? "gzip" : "plain";
+    kprintf("[deb] 已安装 %s %s：%u 个文件，%llu 字节（amd64，%s）\n",
+            info.package, info.version, files, (unsigned long long)bytes,
+            control_gzip || data_gzip ? "gzip" : "未压缩");
+    kprintf("[deb] INSTALL_OK package=%s version=%s files=%u bytes=%llu arch=amd64 format=%s\n",
+            info.package, info.version, files, (unsigned long long)bytes, format);
+out:
+    if (control_alloc)
+        kfree(control_alloc);
+    if (data_alloc)
+        kfree(data_alloc);
+    return rc;
 }
 
 int deb_install(const char *package_path)

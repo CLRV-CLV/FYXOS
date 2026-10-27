@@ -24,6 +24,7 @@
 #include <fyxos/ide.h>
 #include <fyxos/process.h>
 #include <fyxos/deb.h>
+#include <fyxos/win64.h>
 
 #define LINE_MAX    160
 #define MAX_ARGS    16
@@ -183,8 +184,8 @@ static const struct command *const g_commands[] = {
     &(const struct command){ "Get-ChildItem", "Get-ChildItem [路径]", "PowerShell：list files 子集", cmd_ls },
     &(const struct command){ "Get-Content", "Get-Content <文件>", "PowerShell：show file 子集",    cmd_cat },
     &(const struct command){ "Get-Process", "Get-Process",       "PowerShell：list processes 子集", cmd_threads },
-    &(const struct command){ "run",      "run [linux] <ELF>",    "装载原生或静态 Linux x86_64 程序", cmd_run },
-    &(const struct command){ "deb",      "deb <未压缩amd64.deb>", "安装标准 DEB（无依赖/脚本/压缩）", cmd_deb },
+    &(const struct command){ "run",      "run [linux|win64] <程序>", "装载原生/Linux ELF 或 Win64 PE32+", cmd_run },
+    &(const struct command){ "deb",      "deb <amd64.deb>",      "安装未压缩/gzip DEB（无依赖/脚本）", cmd_deb },
 };
 
 static const struct command *find_command(const char *name)
@@ -657,8 +658,11 @@ static int cmd_run(int argc, char **argv)
     } else if (argc == 3 && strcmp(argv[1], "linux") == 0) {
         path = argv[2];
         abi = PROC_ABI_LINUX;
+    } else if (argc == 3 && strcmp(argv[1], "win64") == 0) {
+        path = argv[2];
+        abi = PROC_ABI_WIN64;
     } else {
-        kprintf("用法: run [linux] <静态x86_64 ELF>；动态 ELF/PE 不支持\n");
+        kprintf("用法: run [linux] <静态x86_64 ELF> | run win64 <PE32+ EXE>\n");
         return 1;
     }
     int status = 0;
@@ -672,13 +676,16 @@ static int cmd_run(int argc, char **argv)
     if (abi == PROC_ABI_LINUX)
         kprintf("[linux] 未识别调用累计=%llu（可选能力 ENOSYS 亦有独立日志）\n",
                 (unsigned long long)linux_syscall_unknown_count());
+    if (abi == PROC_ABI_WIN64)
+        kprintf("[win32] 未实现服务累计=%llu\n",
+                (unsigned long long)win32_syscall_unknown_count());
     return status;
 }
 
 static int cmd_deb(int argc, char **argv)
 {
     if (argc != 2) {
-        kprintf("用法: deb <标准未压缩 amd64.deb>\n");
+        kprintf("用法: deb <标准未压缩/gzip amd64.deb>\n");
         return 1;
     }
     int rc = deb_install(argv[1]);

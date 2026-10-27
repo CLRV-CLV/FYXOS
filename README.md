@@ -20,10 +20,12 @@
 1080p24、H.264＋立体声 AAC、原创画面与合成配乐；可修改的 Remotion 工程和
 复现命令见 [`video/README.md`](video/README.md)。
 
-当前分支另新增可实跑的 **静态 Linux x86_64＋标准未压缩 amd64 DEB** 纵切片：
-guest 内 `deb` 解包安装、`run linux` 执行包内未修改 glibc ELF、两行输出与
-退出码 23 均已验收；干净全量为 **89 PASS / 0 FAIL**。这不是任意 EXE/DEB
-或动态 Linux 兼容声明，精确边界见 [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md)。
+当前分支另新增可实跑的 **Win64 PE32+、静态 Linux x86_64、gzip/未压缩
+amd64 DEB** 纵切片：真实 kernel32 导入与退出码 24、gzip DEB 内未修改
+glibc ELF 与退出码 23 均在 quick 和完整 BIOS 路径验收；干净全量为
+**101 PASS / 0 FAIL**。这不是任意 EXE/DEB 或动态 Linux 兼容声明，精确边界见
+[`docs/design/win64-compat.md`](docs/design/win64-compat.md) 与
+[`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md)。
 
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
@@ -66,12 +68,19 @@ make app-image APP=build/my-demo.elf
 不把宿主 GCC 描述为已经在 guest 内运行。构建兼容验收包还需要宿主的
 静态 glibc 开发文件与 `dpkg-deb`；它们只是构建工具，不是 guest 内 GCC/dpkg。
 
-Linux/DEB 纵切片可在 Shell 直接复现：
+Linux/DEB 与 Win64 纵切片可在 Shell 直接复现：
 
 ```text
+deb /packages/fyx-deb-plain-demo.deb
+cat /etc/fyx-deb-plain-ok
+# 应输出 UNCOMPRESSED_DEB_OK
+
 deb /packages/fyx-deb-demo.deb
 run linux /usr/bin/fyx-deb-demo
 # 应输出 LINUX_GLIBC_OK、DEB_PACKAGE_OK，随后报告退出码 23
+
+run win64 /bin/win64-demo.exe
+# 应输出 WIN64_PE_OK、WIN32_IMPORT_OK，随后报告退出码 24
 ```
 
 也可以单独跑内核（跳过引导，用于快速迭代）：
@@ -95,8 +104,8 @@ run linux /usr/bin/fyx-deb-demo
 | 虚拟内存 | `kernel/mm/vmm.c` | 四级页表，内核高半核 + HHDM |
 | 堆 | `kernel/mm/heap.c` | 首次适应 |
 | 调度 | `kernel/sched/` | 抢占式轮转 + idle 线程 + 上下文切换 |
-| 系统调用 | `kernel/sys/` | SYSCALL/SYSRET，38 个调用，每线程独立系统调用栈 |
-| 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF |
+| 系统调用 | `kernel/sys/` | SYSCALL/SYSRET，38 个原生调用＋Linux/Win32 独立分表，每线程独立系统调用栈 |
+| 用户进程 | `kernel/sys/process.c`、`elf_load.c`、`pe_load.c`、`usermode.S` | 独立页表、ring 3、fork/exec/wait/exit/brk；从 VFS 装载 ELF/PE32+ |
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
 | ATA 块设备 | `kernel/drivers/ata.c` | 自研 ATA IDENTIFY、LBA28 PIO 读写、FLUSH |
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
@@ -104,7 +113,9 @@ run linux /usr/bin/fyx-deb-demo
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 开源 GCC C11 SDK | `sdk/`、`tools/mksdk.py` | 宿主 GCC 完整 C11 前端、CRT/链接脚本、最小运行库、SDK 压缩包与预装 ring3 示例 |
 | Linux x86_64 纵切片 | `kernel/sys/linux_syscall.c`、`elf_load.c` | 静态 ET_EXEC、独立 syscall 编号/errno、auxv、FS/TLS、brk/mmap、SSE2 上下文与单调时钟 |
-| DEB 安装纵切片 | `kernel/fs/deb.c`、`compat/deb-demo/` | ar＋未压缩 ustar、amd64 control 校验、目录/普通文件解包；拒绝依赖、脚本、链接和压缩输入 |
+| Win64 PE32+ 纵切片 | `kernel/sys/pe_load.c`、`win32.c`、`compat/win64-demo/` | 头页/节/W^X 映射、真实 IAT、kernel32 三项导入、Win64 ABI 与退出码；未知导入明确拒绝 |
+| gzip/DEFLATE | `kernel/lib/gzip.c` | stored/fixed/dynamic、可选头、ISIZE/CRC32、输出上限；ASan/UBSan 正反例与 guest 实跑 |
+| DEB 安装纵切片 | `kernel/fs/deb.c`、`compat/deb-demo/` | ar＋gzip/未压缩 ustar、amd64 control 校验、目录/普通文件解包；拒绝依赖、脚本、链接和 xz/zstd |
 | 原生 C 子集工具链 | `kernel/toolchain/fyxcc.c` | 局部整数变量、算术/位/逻辑/?: 运算、复合赋值、while/do/for；直接生成静态 x86_64 ET_EXEC |
 | FyxJS 子集工具链 | `kernel/toolchain/fyxjs.c` | 多个静态整数 function、参数/递归、let、严格比较、console.log；共用原生后端生成 ELF |
 | FYX Studio 首版 | `kernel/ide/ide.c` | 真实文本缓冲、基本高亮、Ctrl-S/B/R/Q 保存/编译/运行/退出；运行仍是独立 ring3 进程 |
@@ -122,9 +133,9 @@ run linux /usr/bin/fyx-deb-demo
 ### 自动化验收
 
 ```bash
-make test           # 89 项：原 80 项 + Linux/DEB 兼容 9 项
+make test           # 101 项：原 80 项 + Win64/Linux/DEB 兼容 21 项
 make test-sdk      # GCC 独立编译、ELF64 W^X、预装示例 ring3 运行
-make test-compat   # DEB 宿主/来客一致、安装/run linux/退出码/原 ABI 回归
+make test-compat   # 两种 DEB、Win64、负例、退出码及 quick/full-boot CRC 回归
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS、循环/运算符、诊断与 Studio/PNG 闭环
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -152,13 +163,16 @@ make test-storage   # 只重跑存储集成测试
 FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B 槽与独立救援
 环境仍未完成。
 
-**兼容边界：当前不能运行任意 EXE 或 DEB。** Windows PE/Win32 尚未实现；
-Linux 仅验收固定地址、静态、单线程 x86_64 ET_EXEC，不含 PT_INTERP 动态
-链接、PIE、完整 pthread/signal 或 Linux 全量 syscall。DEB 仅接受未压缩
-`control.tar`/`data.tar`、amd64、无依赖/maintainer scripts 的普通文件和目录；
-gzip/xz/zstd、apt 仓库、依赖求解与完整 dpkg 数据库未完成。glibc 的 `rseq`
-探测与无可靠熵源时的 `getrandom` 会明确记录 `ENOSYS`；不会用假随机数冒充
-安全实现。包内示例的成功不能外推为真实 Debian 生态已兼容。
+**兼容边界：当前仍不能运行任意 EXE 或 DEB。** Win64 仅验收固定 ImageBase
+的 PE32+、有限节表和 `kernel32.dll` 的 `GetStdHandle`/`WriteFile`/`ExitProcess`；
+没有任意 DLL/CRT、ASLR 重定位、TLS/SEH、完整 HANDLE、Win32 GUI 或 Windows
+生态。Linux 仅验收固定地址、静态、单线程 x86_64 ET_EXEC，不含 PT_INTERP
+动态链接、PIE、完整 pthread/signal 或 Linux 全量 syscall。DEB 接受 amd64、
+无依赖/maintainer scripts 的普通文件和目录，以及未压缩或 gzip 的
+`control.tar[.gz]`/`data.tar[.gz]`（每成员解压上限 16 MiB）；xz/zstd、apt
+仓库、依赖求解与完整 dpkg 数据库未完成。glibc 的 `rseq` 探测与无可靠熵源时
+的 `getrandom` 会明确记录 `ENOSYS`；不会用假随机数冒充安全实现。示例成功
+不能外推为真实 Windows/Debian 生态已兼容。
 
 当前刻意保留的简化：fork 仍全量复制用户页；init 的安装种子仍由 `.incbin`
 携带（但启动与 exec 已从 `/bin/init` 读盘）；管道等待采用 tick 轮询；libc 仍是
@@ -178,7 +192,7 @@ include/fyxos/   内核头文件（ABI、boot_info、sched、syscall…）
 kernel/          内核（arch/x86_64 · core · drivers · gfx · lib · mm · net · sched · shell · sys · tests）
 user/            用户态最小 libc、_start、init 验收程序与链接脚本
 sdk/             开源 GCC C11 SDK 包装、freestanding 运行库与完整语言示例
-compat/          静态 glibc/Linux 与标准 DEB 验收载荷源码、control
+compat/          Win64 PE32+、静态 glibc/Linux 与标准 DEB 验收载荷源码/control
 tools/           构建、SDK 打包与测试台
 docs/            规格与远景设计
 ```
@@ -191,8 +205,9 @@ docs/            规格与远景设计
 | 内核虚拟基址 | `0xFFFFFFFF80000000` |
 | HHDM 窗口 | `0xFFFF800000000000` |
 | boot_info | `0x5000` |
-| ELF 暂存区（实模式可达） | `0x10000` – `0x4FFFF` |
-| 引导页表池 | `0x50000` |
+| ELF 暂存区（实模式可达） | `0x10000` 起，按镜像描述符增长 |
+| 引导页表池（PT_LOAD 复制后使用） | `0x50000` |
+| stage2 的 32 位栈顶 | `0x1FF000`（不与 ELF 暂存区重叠） |
 | 系统调用号起始 | `0x1000` |
 
 ---
@@ -207,7 +222,8 @@ docs/            规格与远景设计
 - [`docs/design/ide.md`](docs/design/ide.md) — FYX IDE
 - [`docs/design/system-restore.md`](docs/design/system-restore.md) — 系统还原
 - [`docs/design/user-mode.md`](docs/design/user-mode.md) — 阶段 G 用户态实现与验证边界
-- [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md) — 静态 Linux x86_64 与未压缩 amd64 DEB 的实现、验收和边界
+- [`docs/design/win64-compat.md`](docs/design/win64-compat.md) — Win64 PE32+、真实 IAT/Win64 ABI、三项 kernel32 服务与边界
+- [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md) — 静态 Linux x86_64、gzip/未压缩 DEB、完整 BIOS 验收和边界
 - [`docs/design/fyxfs.md`](docs/design/fyxfs.md) — FYXFS 事务、断电测试与系统还原实现
 - [`docs/design/network.md`](docs/design/network.md) — RTL8139、IPv4/UDP/TCP/DNS、异常报文与实跑验收边界
 - [`docs/design/graphics.md`](docs/design/graphics.md) — BGA、软件光栅、桌面交互与帧校验边界

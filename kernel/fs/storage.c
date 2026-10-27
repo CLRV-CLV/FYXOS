@@ -89,6 +89,35 @@ static int install_initial_files(void)
                 (unsigned)size);
     }
 
+    const char *exe_path = "/bin/win64-demo.exe";
+    size_t exe_size = (size_t)(g_win64_demo_image_end - g_win64_demo_image_start);
+    u32 exe_crc = fyx_crc32(g_win64_demo_image_start, exe_size);
+    if (!exe_size)
+        return -FYX_EINVAL;
+    if (vfs_stat(exe_path, &st) != FYX_OK || st.size != exe_size ||
+        st.crc32 != exe_crc) {
+        int rc = vfs_write_file(exe_path, g_win64_demo_image_start, exe_size);
+        if (rc != 0) {
+            kprintf("[storage] 安装 Win64 验收程序失败：%d\n", rc);
+            return rc;
+        }
+        kprintf("[storage] Win64 PE32+ 已安装到 %s（%u 字节）\n",
+                exe_path, (unsigned)exe_size);
+    }
+
+    const char *bad_exe_path = "/bin/win64-bad-import.exe";
+    size_t bad_exe_size =
+        (size_t)(g_win64_bad_image_end - g_win64_bad_image_start);
+    if (!bad_exe_size)
+        return -FYX_EINVAL;
+    if (vfs_stat(bad_exe_path, &st) != FYX_OK || st.size != bad_exe_size ||
+        st.crc32 != fyx_crc32(g_win64_bad_image_start, bad_exe_size)) {
+        int rc = vfs_write_file(bad_exe_path, g_win64_bad_image_start,
+                                bad_exe_size);
+        if (rc != 0)
+            return rc;
+    }
+
     const char *deb_path = "/packages/fyx-deb-demo.deb";
     size_t deb_size = (size_t)(g_deb_demo_image_end - g_deb_demo_image_start);
     u32 deb_crc = fyx_crc32(g_deb_demo_image_start, deb_size);
@@ -103,6 +132,36 @@ static int install_initial_files(void)
         }
         kprintf("[storage] 标准 DEB 已安装到 %s（%u 字节）\n",
                 deb_path, (unsigned)deb_size);
+    }
+
+    const char *plain_path = "/packages/fyx-deb-plain-demo.deb";
+    size_t plain_size = (size_t)(g_deb_plain_image_end - g_deb_plain_image_start);
+    u32 plain_crc = fyx_crc32(g_deb_plain_image_start, plain_size);
+    if (!plain_size)
+        return -FYX_EINVAL;
+    if (vfs_stat(plain_path, &st) != FYX_OK || st.size != plain_size ||
+        st.crc32 != plain_crc) {
+        int rc = vfs_write_file(plain_path, g_deb_plain_image_start, plain_size);
+        if (rc != 0) {
+            kprintf("[storage] 安装未压缩 DEB 验收包失败：%d\n", rc);
+            return rc;
+        }
+        kprintf("[storage] 未压缩 DEB 已安装到 %s（%u 字节）\n",
+                plain_path, (unsigned)plain_size);
+    }
+
+    const char *bad_path = "/packages/fyx-deb-bad-gzip.deb";
+    size_t bad_size = (size_t)(g_deb_bad_image_end - g_deb_bad_image_start);
+    u32 bad_crc = fyx_crc32(g_deb_bad_image_start, bad_size);
+    if (!bad_size)
+        return -FYX_EINVAL;
+    if (vfs_stat(bad_path, &st) != FYX_OK || st.size != bad_size ||
+        st.crc32 != bad_crc) {
+        int rc = vfs_write_file(bad_path, g_deb_bad_image_start, bad_size);
+        if (rc != 0) {
+            kprintf("[storage] 安装损坏 DEB 负向载荷失败：%d\n", rc);
+            return rc;
+        }
     }
 
     const char motd[] = "FYXOS：数据与快照均由 FYXFS CoW 事务保护。\n";

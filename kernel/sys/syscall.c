@@ -15,6 +15,7 @@
 #include <fyxos/pipe.h>
 #include <fyxos/net.h>
 #include <fyxos/socket.h>
+#include <fyxos/win64.h>
 
 extern void syscall_entry(void);
 
@@ -88,6 +89,8 @@ long syscall_dispatch(u64 number, u64 a1, u64 a2, u64 a3, u64 a4, u64 a5,
     struct process *proc = current_process();
     if (proc && proc->abi == PROC_ABI_LINUX)
         return linux_syscall_dispatch(number, a1, a2, a3, a4, a5, a6);
+    if (proc && proc->abi == PROC_ABI_WIN64)
+        return win32_syscall_dispatch(number, a1, a2, a3, a4, a5, a6);
 
     switch (number) {
     case SYS_LOG_WRITE:

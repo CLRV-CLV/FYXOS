@@ -14,6 +14,7 @@
  *    份页表树 —— 因此内核代码在任意进程上下文里都能直接跑，不需要切换。
  */
 #include <fyxos/process.h>
+#include <fyxos/win64.h>
 #include <fyxos/pipe.h>
 #include <fyxos/sched.h>
 #include <fyxos/kernel.h>
@@ -635,7 +636,8 @@ static void process_reap_orphans(void)
 
 int process_run_wait_abi(const char *name, enum process_abi abi, int *exit_code)
 {
-    if (!name || !*name || (abi != PROC_ABI_FYXOS && abi != PROC_ABI_LINUX))
+    if (!name || !*name || (abi != PROC_ABI_FYXOS && abi != PROC_ABI_LINUX &&
+                            abi != PROC_ABI_WIN64))
         return -FYX_EINVAL;
     process_reap_orphans();
 
@@ -654,7 +656,8 @@ int process_run_wait_abi(const char *name, enum process_abi abi, int *exit_code)
     }
     const char *argv[] = { name, NULL };
     const char *envp[] = { "FYXOS=1", NULL };
-    rc = process_load_elf(p, program, size, argv, envp);
+    rc = abi == PROC_ABI_WIN64 ? process_load_pe(p, program, size) :
+        process_load_elf(p, program, size, argv, envp);
     kfree(program);
     if (rc != 0) {
         process_free(p);

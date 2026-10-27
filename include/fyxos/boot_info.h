@@ -104,13 +104,15 @@ struct fyx_boot_info {
  * 现在的方案：暂存到低端 0x10000，进入 32 位平坦模式后再由 stage2_32 把
  * PT_LOAD 段复制到最终的 0x200000（KERNEL_PHYS_BASE）。
  *
- * 低端布局（均 < 640 KiB，落在 E820 的可用区里）：
- *   0x10000-0x4FFFF  内核 ELF 暂存      （256 KiB）
- *   0x50000-0x5FFFF  引导期页表池       （64 KiB）
- *   0x60000-0x6FFFF  32 位栈（栈顶 0x70000，向下生长）
+ * 布局注意：ELF 暂存区随内核增长，可能经过 0x50000 页表池；页表只在所有
+ * PT_LOAD 已复制完后才建立，因此该复用是安全的。32 位 C 栈则在段复制期间
+ * 活跃，已迁到高端 0x1F0000-0x1FEFFF（栈顶 0x1FF000），不再覆盖暂存 ELF。
+ *
+ *   0x10000起         内核 ELF 暂存（实际大小由镜像描述符给出）
+ *   0x50000-0x5FFFF  引导期页表池（段复制完成后使用）
+ *   0x1F0000起       32 位栈（高端可用 RAM，向下生长）
  */
 #define KERNEL_STAGE_ADDR   0x10000u    /* ELF 文件暂存（实模式可达） */
-#define KERNEL_STAGE_MAX    0x40000u    /* 256 KiB */
 #define BOOT_PAGETABLE_ADDR 0x50000u    /* 引导期页表池 */
 
 #define STAGE2_ADDR         0x8000u

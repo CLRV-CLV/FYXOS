@@ -244,7 +244,9 @@ pm_entry:
     mov     fs, ax
     mov     gs, ax
     mov     ss, ax
-    mov     esp, 0x70000
+    /* BIOS 已用完：32 位栈放到高端 0x1F0000..0x1FEFFF，绝不能再与
+     * 0x10000 起步、可增长的内核 ELF 暂存区重叠。栈顶不参与段复制。 */
+    mov     esp, 0x1FF000
 
     /* 清空 .bss（C 代码依赖） */
     mov     edi, offset __bss_start

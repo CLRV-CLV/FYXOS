@@ -60,6 +60,7 @@ struct fyx_fd {
 enum process_abi {
     PROC_ABI_FYXOS = 0,
     PROC_ABI_LINUX = 1,
+    PROC_ABI_WIN64 = 2,
 };
 
 enum process_state {
@@ -79,7 +80,7 @@ struct process {
 
     struct address_space as;       /* 用户地址空间（PML4 物理地址） */
     u64                entry;      /* 程序入口（虚拟地址） */
-    enum process_abi   abi;        /* 原生 FYXOS 或 Linux x86_64 syscall ABI */
+    enum process_abi   abi;        /* FYXOS、Linux x86_64 或 Win64/Win32 ABI */
     u64                brk;        /* 逻辑程序断点（堆顶） */
     u64                brk_base;   /* 允许收缩到的初始堆顶 */
     u64                brk_mapped; /* 已映射堆页的末端 */
@@ -133,6 +134,14 @@ extern const u8 g_gcc_demo_image_start[];
 extern const u8 g_gcc_demo_image_end[];
 extern const u8 g_deb_demo_image_start[];
 extern const u8 g_deb_demo_image_end[];
+extern const u8 g_win64_demo_image_start[];
+extern const u8 g_win64_demo_image_end[];
+extern const u8 g_deb_plain_image_start[];
+extern const u8 g_deb_plain_image_end[];
+extern const u8 g_deb_bad_image_start[];
+extern const u8 g_deb_bad_image_end[];
+extern const u8 g_win64_bad_image_start[];
+extern const u8 g_win64_bad_image_end[];
 
 void process_start_init(void);   /* 由 kmain 调用：装载并运行第一个用户进程 */
 

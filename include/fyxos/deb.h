@@ -1,4 +1,4 @@
-/* FYXOS — 标准未压缩 amd64 DEB 安装纵切片 */
+/* FYXOS — 标准未压缩/gzip amd64 DEB 安装纵切片 */
 #ifndef FYXOS_DEB_H
 #define FYXOS_DEB_H
 

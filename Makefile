@@ -13,7 +13,7 @@
 #    make clean
 #
 #  工具链要求：gcc / GNU as / GNU ld（freestanding），静态 glibc 与 dpkg-deb
-#  （Linux/DEB 验收载荷），Python 3 + unicorn（仅测试）
+#  （Linux/DEB 验收载荷），GNU objcopy（PE32+），Python 3 + unicorn（仅测试）
 # ============================================================================
 
 ARCH        ?= x86_64
@@ -69,10 +69,17 @@ SDK_HELLO_ELF := $(BUILD)/sdk/hello.elf
 SDK_INPUTS    := $(shell find sdk -type f) tools/mksdk.py \
                  user/start.S user/user.ld user/fyx.h
 
-# ---- Linux x86_64 静态 glibc + 标准未压缩 amd64 DEB 验收载荷 ---------------
+# ---- Linux/DEB 与 Win64 PE32+ 兼容验收载荷 ---------------------------------
 COMPAT_DIR    := $(BUILD)/compat/deb-demo
 COMPAT_DEB    := $(BUILD)/compat/fyx-deb-demo.deb
+COMPAT_PLAIN_DEB := $(BUILD)/compat/fyx-deb-plain-demo.deb
+COMPAT_BAD_DEB := $(BUILD)/compat/fyx-deb-bad-gzip.deb
+COMPAT_PLAIN_DIR := $(BUILD)/compat/deb-plain
 COMPAT_INPUTS := compat/deb-demo/hello.c compat/deb-demo/control
+COMPAT_PLAIN_INPUTS := compat/deb-demo/control-plain compat/deb-demo/plain-note
+WIN64_EXE     := $(BUILD)/compat/win64-demo.exe
+WIN64_BAD_EXE := $(BUILD)/compat/win64-bad-import.exe
+WIN64_OBJ     := $(BUILD)/compat/win64-demo.o
 
 # ---- stage2 的 32 位 C 部分（freestanding） --------------------------------
 SCFLAGS := -std=gnu11 -ffreestanding -fno-pie -fno-stack-protector \
@@ -105,7 +112,7 @@ kernel: $(KERNEL_ELF)
 all: image
 
 # ---------------------------------------------------------------- 内核 ELF
-$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB)
+$(KERNEL_ELF): $(KERNEL_OBJS) kernel/linker.ld $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
 	@mkdir -p $(dir $@)
 	$(LD) $(KLDFLAGS) -T kernel/linker.ld -o $@ $(KERNEL_OBJS)
 	@echo "  LD      $@"
@@ -121,7 +128,7 @@ $(BUILD)/kernel/%.o: kernel/%.S
 	@echo "  AS      $<"
 
 # ------------------------------------------------------ Linux/DEB 兼容验收载荷
-compat: $(COMPAT_DEB)
+compat: $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
 
 $(COMPAT_DEB): $(COMPAT_INPUTS)
 	@rm -rf $(COMPAT_DIR)
@@ -131,8 +138,32 @@ $(COMPAT_DEB): $(COMPAT_INPUTS)
 	      -o $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo compat/deb-demo/hello.c
 	strip --strip-all $(COMPAT_DIR)/root/usr/bin/fyx-deb-demo
 	cp compat/deb-demo/control $(COMPAT_DIR)/root/DEBIAN/control
-	dpkg-deb -Znone --root-owner-group --build $(COMPAT_DIR)/root $@
-	@echo "  DEB     $@ (static Linux x86_64 / uncompressed amd64)"
+	dpkg-deb -Zgzip -z9 --root-owner-group --build $(COMPAT_DIR)/root $@
+	@echo "  DEB     $@ (static Linux x86_64 / gzip amd64)"
+
+$(COMPAT_PLAIN_DEB): $(COMPAT_PLAIN_INPUTS)
+	@rm -rf $(COMPAT_PLAIN_DIR)
+	@mkdir -p $(COMPAT_PLAIN_DIR)/root/etc $(COMPAT_PLAIN_DIR)/root/DEBIAN $(dir $@)
+	cp compat/deb-demo/control-plain $(COMPAT_PLAIN_DIR)/root/DEBIAN/control
+	cp compat/deb-demo/plain-note $(COMPAT_PLAIN_DIR)/root/etc/fyx-deb-plain-ok
+	dpkg-deb -Znone --root-owner-group --build $(COMPAT_PLAIN_DIR)/root $@
+	@echo "  DEB     $@ (uncompressed amd64 regression)"
+
+$(COMPAT_BAD_DEB): $(COMPAT_PLAIN_DEB) tools/mkdeb_bad_gzip.py
+	dpkg-deb -Zgzip -z9 --root-owner-group --build $(COMPAT_PLAIN_DIR)/root \
+	          $(BUILD)/compat/fyx-deb-gzip-probe.deb
+	$(PY) tools/mkdeb_bad_gzip.py --input $(BUILD)/compat/fyx-deb-gzip-probe.deb --output $@
+
+# GNU as 先解析单节内的 RIP 相对引用，再由脚本写标准 DOS/PE32+ 头。
+$(WIN64_OBJ): compat/win64-demo/hello.S
+	@mkdir -p $(dir $@)
+	$(CC) -c -o $@ $<
+
+$(WIN64_EXE): $(WIN64_OBJ) tools/mkpe64.py
+	$(PY) tools/mkpe64.py --object $(WIN64_OBJ) --output $@
+
+$(WIN64_BAD_EXE): $(WIN64_EXE) tools/mkwin64_bad_import.py
+	$(PY) tools/mkwin64_bad_import.py --input $(WIN64_EXE) --output $@
 
 # ------------------------------------------------------------------ 用户态
 # 用户程序先编成静态 ELF64，再由 kernel/sys/init_image.S 用 .incbin 作为
@@ -175,7 +206,7 @@ app-image: $(SDK_STAMP)
 
 # init_image.S 用 .incbin 内嵌用户 ELF，必须显式声明这个依赖；
 # 否则用户程序更新后只会重链内核，旧 blob 仍留在 init_image.o 里。
-$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB)
+$(BUILD)/kernel/sys/init_image.o: $(USER_ELF) $(SDK_DEMO_ELF) $(COMPAT_DEB) $(COMPAT_PLAIN_DEB) $(COMPAT_BAD_DEB) $(WIN64_EXE) $(WIN64_BAD_EXE)
 
 # ------------------------------------------------------------------ 引导器
 boot: $(BUILD)/stage1.bin $(BUILD)/stage2.bin

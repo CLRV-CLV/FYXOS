@@ -1,0 +1,9 @@
+Package: fyx-deb-plain-demo
+Version: 1.0-1
+Section: misc
+Priority: optional
+Architecture: amd64
+Maintainer: FYXOS Compatibility Test <test@fyxos.invalid>
+Description: FYXOS uncompressed DEB regression payload
+ A tiny standard amd64 package that keeps the original uncompressed
+ control.tar/data.tar installation path under continuous guest test.

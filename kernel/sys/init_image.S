@@ -23,13 +23,47 @@ g_gcc_demo_image_start:
     .align 8
 g_gcc_demo_image_end:
 
-    /* 标准 ar + 未压缩 tar 的 amd64 DEB；启动时作为普通包文件安装到 FYXFS。 */
+    /* 标准 ar + gzip tar 的 amd64 DEB；启动时作为普通包文件安装到 FYXFS。 */
     .align 16
     .globl g_deb_demo_image_start
     .globl g_deb_demo_image_end
 g_deb_demo_image_start:
     .incbin "build/compat/fyx-deb-demo.deb"
-    .align 8
 g_deb_demo_image_end:
+    .align 8
+
+    /* 小型未压缩包持续覆盖 control.tar/data.tar 原始路径。 */
+    .align 16
+    .globl g_deb_plain_image_start
+    .globl g_deb_plain_image_end
+g_deb_plain_image_start:
+    .incbin "build/compat/fyx-deb-plain-demo.deb"
+g_deb_plain_image_end:
+    .align 8
+
+    /* data.tar.gz CRC32 损坏；必须在写任何文件之前拒绝。 */
+    .align 16
+    .globl g_deb_bad_image_start
+    .globl g_deb_bad_image_end
+g_deb_bad_image_start:
+    .incbin "build/compat/fyx-deb-bad-gzip.deb"
+g_deb_bad_image_end:
+    .align 8
+
+    /* 真正的 PE32+：经 kernel32.dll 的三项导入进入 Win32 服务分表。 */
+    .align 16
+    .globl g_win64_demo_image_start
+    .globl g_win64_demo_image_end
+g_win64_demo_image_start:
+    .incbin "build/compat/win64-demo.exe"
+    .align 8
+g_win64_demo_image_end:
+
+    .align 16
+    .globl g_win64_bad_image_start
+    .globl g_win64_bad_image_end
+g_win64_bad_image_start:
+    .incbin "build/compat/win64-bad-import.exe"
+g_win64_bad_image_end:
 
 .section .note.GNU-stack,"",@progbits

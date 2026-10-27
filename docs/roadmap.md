@@ -27,7 +27,7 @@
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
 | L | FYX IDE | 🟡 单文件 Studio 编辑/构建/运行完成；完整 IDE 待办 |
 | M | 系统还原 | ✅ 核心完成（CoW 快照/回滚/保留 `/home`） |
-| N | 应用兼容 | 🟡 静态 Linux x86_64＋未压缩 amd64 DEB 纵切片；PE/动态 ELF/完整生态待办 |
+| N | 应用兼容 | 🟡 Win64 PE32+ 三项导入、静态 Linux、gzip/未压缩 DEB 纵切片；完整 Win32/动态 ELF/生态待办 |
 
 验证方式（阶段 E 已建立，后续沿用）：
 
@@ -104,7 +104,8 @@ ACK、RST 拒绝、伪首部 checksum、PSH echo、流式部分读取、FIN 与 
 和单个未确认数据段支持固定 20ms、最多三次发送，UDP 也会生成并校验伪首部
 checksum。DNS 在 UDP TC 后通过同一 TCP 客户端发送长度前缀查询并解析响应；
 UDP 无响应时以同一事务 ID 重传一次，8 项 A 记录缓存遵循 TTL 并规范化大小写
-和根点。当前共 38 个原生 syscall、66 条 Shell 命令，另有独立 Linux ABI 子集。listen/server、自适应 RTO、
+和根点。当前共 38 个原生 syscall、66 条 Shell 命令，另有独立 Linux ABI 与
+Win32 服务子集。listen/server、自适应 RTO、
 拥塞控制、乱序重组、IPv6、TLS、DNS AAAA/CNAME 递归/负缓存与 E1000/VirtIO-net 仍未实现，
 详见 [`docs/design/network.md`](design/network.md)。
 
@@ -181,13 +182,18 @@ A/B 内核槽、独立救援镜像、认证、自动保留策略及包管理器�
 
 ### 阶段 N — 应用兼容
 
-见 [`docs/design/linux-deb-compat.md`](design/linux-deb-compat.md)。
+见 [`docs/design/win64-compat.md`](design/win64-compat.md) 与
+[`docs/design/linux-deb-compat.md`](design/linux-deb-compat.md)。
 
-**当前实现（已实跑通过）**：标准未压缩 amd64 DEB 在 guest 内解包安装，
-包内未修改的静态 glibc x86_64 程序输出两行并以 23 退出；Linux/FYX syscall
-分表，具备 auxv、FS/TLS、brk/匿名 mmap、SSE2 上下文与 PIT 单调时钟。
-Windows PE/Win32、PT_INTERP 动态 ELF、压缩 DEB、依赖/dpkg 数据库、完整
-Linux 线程/信号/POSIX 和任意 EXE/DEB 兼容均未完成。
+**当前实现（已实跑通过）**：固定 ImageBase 的 Win64 PE32+ 经真实 IAT 调用
+`kernel32.dll` 的 `GetStdHandle`/`WriteFile`/`ExitProcess`，输出两项标记并
+以 24 退出；未知导入和跨格式输入明确拒绝。标准 gzip 与未压缩 amd64 DEB
+均可在 guest 解包，gzip 包内未修改的静态 glibc x86_64 程序以 23 退出。
+Linux/FYX/Win32 分表，Linux 侧具备 auxv、FS/TLS、brk/匿名 mmap、SSE2 上下文
+与 PIT 单调时钟。quick 和完整 BIOS 均核对载荷 CRC 并执行两种 ABI；完整
+BIOS 还促成修复了 stage2 栈覆盖大型 ELF 暂存区的全局布局问题。
+任意 DLL/CRT/Win32、PT_INTERP 动态 ELF、xz/zstd、依赖/dpkg 数据库、完整
+Linux 线程/信号/POSIX 和任意 EXE/DEB 兼容仍未完成。
 
 ---
 
@@ -197,7 +203,7 @@ Linux 线程/信号/POSIX 和任意 EXE/DEB 兼容均未完成。
 |---|---|---|
 | 冷启动 | ≤ 3 秒（NVMe） | 并行驱动探测、延迟初始化、内核镜像常驻压缩 |
 | 基础安装体积 | ≤ 2 GiB | 对比 Win10 的 20+ GiB；靠 CoW + 压缩 + 按需组件 |
-| 内核二进制 | ≤ 4 MiB | 当前兼容验收构建约 978 KiB（含内嵌 DEB；引导布局上限 1 MiB） |
+| 内核二进制 | ≤ 4 MiB | 当前兼容验收构建 637,304 字节（含 gzip/未压缩 DEB 与 Win64 载荷；当前引导布局上限 1 MiB） |
 | 空闲内存占用 | ≤ 400 MiB | 桌面环境常驻 |
 | 输入延迟 | ≤ 1 帧（120Hz 下 ≤ 8.3 ms） | 合成器直写、输入线程优先级最高 |
 | 兼容性 | POSIX 完整 + Win32 常用子集 | 见 `docs/spec/fyx-cli.md` |
