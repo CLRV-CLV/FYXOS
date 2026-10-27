@@ -331,6 +331,45 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/jf.js function fact(n){if(n<=1)return 1\\;"
+            "return n*fact(n-1)\\;}function main(){console.log(\"JS_FN_OK\")\\;"
+            "process.exit(fact(3)*7)\\;};"
+            "fyxjs /home/user/jf.js /home/user/jf.elf;run /home/user/jf.elf;"
+            "write /home/user/ja.js function add(a,b){console.log(\"JS_ADD_OK}\")\\;"
+            "/*}*/return a+b\\;}/*}*/function main(){process.exit(add(40,2))\\;};"
+            "jsc /home/user/ja.js /home/user/ja.elf;run /home/user/ja.elf;"
+            "write /home/user/badexit.js function bad(){process.exit(1)\\;}"
+            "function main(){return 0\\;};"
+            "fyxjs /home/user/badexit.js /home/user/badexit.elf;"
+            "write /home/user/hoist.js function main(){return later()\\;}"
+            "function later(){return 42\\;};"
+            "fyxjs /home/user/hoist.js /home/user/hoist.elf;"
+            "write /home/user/nomain.js function value(){return 42\\;};"
+            "fyxjs /home/user/nomain.js /home/user/nomain.elf;"
+            "write /home/user/unterm.js function main(){if(true){return 42\\;};"
+            "fyxjs /home/user/unterm.js /home/user/unterm.elf;shutdown"
+        )
+        out, _ = run_case("js-functions", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/jf.elf 退出码=42", "FyxJS 递归")
+        expect(out, "[run] /home/user/ja.elf 退出码=42",
+               "FyxJS 双参数 helper 与 jsc 别名")
+        expect(out, "JS_FN_OK", "FyxJS main 输出")
+        expect(out, "JS_ADD_OK}", "helper 输出及字符串/注释大括号")
+        expect(out, "process.exit is only supported in main",
+               "helper process.exit 诊断")
+        expect(out, "unknown function (prototype or definition required)",
+               "无提升的前向调用诊断")
+        expect(out, "missing main function", "缺少 main 诊断")
+        expect(out, "unterminated function body", "未闭合函数体诊断")
+        print("  [PASS] FyxJS 多函数、参数、递归、词法边界与退出诊断")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] FyxJS 函数：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"

@@ -87,7 +87,7 @@ make image          # = make boot + make kernel + 生成 build/fyxos.img
 ### 自动化验收
 
 ```bash
-make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 10 + Git/CLI 4 + 图形 3 + 存储 5
+make test           # full/quick 各 25 + 网络 6 + 工具链/IDE 11 + Git/CLI 4 + 图形 3 + 存储 5
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
 make test-toolchain  # C/FyxJS、循环/运算符、诊断与 Studio/PNG 闭环
 make test-git        # 提交、diff、restore 与跨重启仓库持久化
@@ -108,9 +108,10 @@ make test-storage   # 只重跑存储集成测试
 算术/比较/移位/位/逻辑运算、复合赋值、局部变量 `++/--`、`if/else`、
 `while/do…while/for`、`switch/case/default`、`break/continue`、`?:` 和
 `puts/print`；switch 支持整数字面量标签与 fallthrough。没有函数指针、指针、数组、
-结构体、预处理器或 libc，不是完整 C/GCC/Clang。FyxJS 同样仅覆盖
-静态整数子集，没有动态类型、对象、闭包、数组、事件循环或 JS 库；完整多语言
-工具链仍未完成。Studio 也是单文件、末尾插入式首版，不是 VS Code 级 IDE。
+结构体、预处理器或 libc，不是完整 C/GCC/Clang。FyxJS 同样仅覆盖静态整数子集，
+现已支持多个函数、最多 4 个参数和递归，但调用前必须先定义，没有函数提升；
+`process.exit` 仍只在 main 中可用。没有动态类型、对象、闭包、数组、事件循环
+或 JS 库；完整多语言工具链仍未完成。Studio 也是单文件、末尾插入式首版，不是 VS Code 级 IDE。
 FYXGit 仅是上述受限 v1，不是完整 Git 兼容；完整 TCP/IPv6、A/B 槽与独立救援
 环境仍未完成。
 

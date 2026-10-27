@@ -5,8 +5,9 @@
 >
 > 当前可运行实现包括 `kernel/toolchain/fyxcc.c` 的小型 C 子集前端，以及
 > `kernel/toolchain/fyxjs.c` 的 FyxJS 静态整数子集前端；两者直接生成静态
-> x86_64 ELF，共用控制流、表达式和代码生成后端。FyxJS 已支持 function main、
-> let、严格比较、console.log/process.exit。它们验证两种源语言的原生编译/装载
+> x86_64 ELF，共用控制流、表达式和代码生成后端。FyxJS 已支持多个 function、
+> 静态整数参数与递归、let、严格比较、console.log 和 main 中的 process.exit；
+> 没有函数提升，调用前需先定义。它们验证两种源语言的原生编译/装载
 > 主链，但不代表完整 C/JavaScript、GCC/LLVM、多语言、自举或完整运行库已经交付。
 > FyxJS 边界详见 [`../design/fyxjs.md`](../design/fyxjs.md)。
 >
@@ -19,7 +20,8 @@
 > 最多 64 个标签，支持 default、fallthrough 和嵌套；`break` 退出最近的循环或
 > switch，`continue` 穿过 switch 继续最近的外层循环。程序含 main 在内最多
 > 16 个 `int` 函数，且必须有一个无参 `int main`；每函数最多 4 个 `int` 参数、
-> 16 个局部/参数变量，参数按源码顺序压栈，调用方清理，支持嵌套和递归调用。
+> 16 个局部/参数变量，最多 128 个调用点；参数按源码顺序压栈，调用方清理，
+> 支持嵌套和递归调用。
 > ELF 入口先跳转到 main，helper 的 return 恢复 rbp/rsp 后 ret，main 的 return
 > 仍映射 SYS_EXIT。函数原型的参数名可省略，一致的原型可重复；调用前必须有
 > 原型或定义。所有 call rel32 在程序解析后统一回填，因此支持前向调用和相互

@@ -143,9 +143,11 @@ x86_64 ET_EXEC，经 FYXFS 保存后由 `run`/IDE 装载到 ring3；支持多个
 switch fallthrough/嵌套/顺序标签隔离、switch 与循环的 break/continue 归属、
 多参数/递归/helper 内 syscall 与返回、原型/前向 rel32 修补/相互递归、
 优先级和 ring3 退出码均有自动化验收。它目前没有函数指针或其它类型，
-不支持独立目标文件与链接，不是完整 C。`fyxjs`/`jsc` 另提供 FyxJS v1 前端：`function main`、
-`let`、严格比较、`console.log` 和 `process.exit` 已生成同一种原生 ELF 并实跑
-返回 42；动态类型、对象、闭包、数组、事件循环和 JS 库未实现，完整多语言
+不支持独立目标文件与链接，不是完整 C。`fyxjs`/`jsc` 另提供 FyxJS v1 前端：
+多个 `function`、最多 4 个静态整数参数、直接/递归调用、`let`、严格比较、
+`console.log` 和 main 中的 `process.exit` 已生成同一种原生 ELF，并通过递归、
+双参数 helper、字符串/注释大括号及 ring3 退出码验收。调用前需先定义，没有
+函数提升；动态类型、对象、闭包、数组、事件循环和 JS 库未实现，完整多语言
 工具链仍是后续目标。
 另有 FYXGit v1：单个原子持久化 `.fyxgit` 数据库、暂存区、提交父链、文本 diff
 和 restore 已跨重启验收；它不是 Git 的 SHA-1/index/pack 兼容实现，完整 git

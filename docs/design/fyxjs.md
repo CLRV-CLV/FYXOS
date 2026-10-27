@@ -22,47 +22,51 @@ VFS truncate；编译失败不会把旧 ELF 当作新产物运行。
 
 ## v1 语法
 
-- 单个 `function main() { ... }` 入口；
+- 多个顶层 `function name(args...) { ... }`，必须包含一个无参 main；
+- 最多 4 个静态整数参数，直接、嵌套和自身递归调用；调用前需先定义；
 - `let name = expression;` 声明，以及整数赋值；
 - 32 位整数、四则运算、括号、`== != < <= > >=`；
 - JavaScript 严格比较 `===` / `!==`；
 - `if / else`、`while` 与大括号嵌套块；
 - `true` / `false`；
 - `console.log("literal")` 或 `console.log(integer_expression)`；
-- `process.exit(integer_expression)`；
+- main 中的 `process.exit(integer_expression)`；helper 中会明确报错；
 - `//` 与 `/* ... */` 注释；双引号字符串按原样保留。
 
 示例：
 
 ```js
+function fact(n) {
+    if (n <= 1) { return 1; }
+    return n * fact(n - 1);
+}
 function main() {
-    let x = 0;
-    while (x < 6) { x = x + 1; }
-    if (x === 6) { x = x * 7; } else { x = 1; }
-    console.log("JS_OK");
-    process.exit(x);
+    console.log("JS_FN_OK");
+    process.exit(fact(3) * 7);
 }
 ```
 
-该程序应输出 `JS_OK`，随后由 ring3 进程以 42 退出。字符串输出不会自动补换行，
+该程序应输出 `JS_FN_OK`，随后由 ring3 进程以 42 退出。字符串输出不会自动补换行，
 与底层 `puts` 的系统调用语义一致。
 
 ## 明确边界
 
-所有变量都是静态 32 位整数。当前没有动态类型、对象、数组、闭包、函数调用、
-异常、原型、事件循环、垃圾回收、模块、标准 JS 库或 Node API；不支持单引号
-字符串、模板字符串及其转义语义。C 后端的每函数 16 个局部/参数变量、32 层块
-嵌套和 64 KiB 中间文本上限同样适用；FyxJS 前端仍只生成单个 main，不暴露
-C 后端已有的 helper/递归调用能力。`console` / `process` 只是这里定义的两个内建
-编译目标，不代表浏览器或 Node 兼容层已经存在。
+所有变量和函数返回值都是静态 32 位整数。当前没有动态类型、对象、数组、
+一等函数、闭包、异常、原型、事件循环、垃圾回收、模块、标准 JS 库或 Node API；
+不支持单引号字符串、模板字符串及其转义语义。没有 JavaScript 函数提升或
+相互递归，调用前必须先定义；`process.exit` 只在 main 中映射进程退出，helper
+中拒绝使用。C 后端的 16 个函数、每函数 4 个参数与 16 个局部/参数变量、32 层块
+嵌套和 64 KiB 中间文本上限同样适用。`console` / `process` 只是这里定义的两个
+内建编译目标，不代表浏览器或 Node 兼容层已经存在。
 
 ## 实现与验收
 
 - `kernel/toolchain/fyxjs.c`：词法边界感知的前端、关键字/内建函数转换；
 - `kernel/toolchain/fyxcc.c`：共用表达式、控制流和 x86_64 ELF 后端；
 - `kernel/shell/shell.c`：`fyxjs` / `jsc` 命令；
-- `tools/test_toolchain.py`：实际源码输入、ELF 生成、JS_OK、退出码 42、
-  非法单引号字符串诊断，以及既有 C/IDE 回归。
+- `tools/test_toolchain.py`：实际源码输入、ELF 生成、JS_OK/JS_FN_OK、递归与
+  双参数 helper、jsc 别名、字符串/注释大括号、退出码 42、非法单引号、helper
+  process.exit、无提升前向调用与缺少 main 诊断，以及既有 C/IDE 回归。
 
 可复现：
 
