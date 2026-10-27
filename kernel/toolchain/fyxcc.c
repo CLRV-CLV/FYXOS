@@ -1,7 +1,8 @@
 /* FYXOS — 小型 C 子集到 x86_64 静态 ELF 的原生编译器
  *
  * 支持：int main、局部整数变量/赋值、四则运算、比较、puts/print 字符串、
- * return、if/else、while 与嵌套块。生成代码直接使用 FYXOS SYSCALL ABI，
+ * return、if/else、while/for、break/continue 与嵌套块。生成代码直接使用
+ * FYXOS SYSCALL ABI，
  * 不依赖宿主 libc、GCC 或外部链接器；变量在用户栈上，保持 ELF 段 RX。
  * 这不是完整 C：没有函数调用、指针、数组、结构体、预处理器或 libc。
  */
@@ -32,6 +33,12 @@ struct cc_var {
     u32 offset;                             /* rbp - offset */
 };
 
+struct cc_loop {
+    size_t break_chain;                     /* disp32 中暂存下一条链位置 */
+    size_t continue_chain;
+    size_t continue_target;
+};
+
 struct cc_parser {
     const char *source;
     size_t length;
@@ -45,6 +52,8 @@ struct cc_parser {
     struct cc_var vars[CC_MAX_VARS];
     u32 var_count;
     u32 depth;
+    struct cc_loop loops[CC_MAX_DEPTH];
+    u32 loop_depth;
     int error;
     struct fyxcc_diagnostic *diagnostic;
 };
@@ -291,6 +300,33 @@ static size_t cc_emit_jmp(struct cc_parser *p)
     size_t pos = p->code_pos;
     cc_emit32(p, 0);
     return pos;
+}
+
+static void cc_emit_loop_jump(struct cc_parser *p, size_t *chain)
+{
+    cc_emit8(p, 0xE9);
+    size_t pos = p->code_pos;
+    cc_emit32(p, (u32)*chain);                 /* 暂时保存链表，而非位移 */
+    *chain = pos;
+}
+
+static void cc_patch_loop_chain(struct cc_parser *p, size_t chain,
+                                size_t target)
+{
+    while (chain) {
+        if (chain + 4 > p->code_pos) {
+            cc_fail(p, "invalid loop fixup chain");
+            return;
+        }
+        u32 next = (u32)p->image[chain] |
+                   ((u32)p->image[chain + 1] << 8) |
+                   ((u32)p->image[chain + 2] << 16) |
+                   ((u32)p->image[chain + 3] << 24);
+        cc_patch_jump(p, chain, target);
+        if (p->error)
+            return;
+        chain = next;
+    }
 }
 
 static bool cc_parse_string(struct cc_parser *p, size_t *offset, size_t *length)
@@ -566,6 +602,48 @@ static void cc_emit_return(struct cc_parser *p)
 
 static bool cc_parse_statement(struct cc_parser *p);
 
+static bool cc_parse_declaration(struct cc_parser *p)
+{
+    char name[CC_VAR_NAME];
+    if (!cc_identifier(p, name)) {
+        cc_fail(p, "expected local variable name");
+        return false;
+    }
+    if (cc_consume(p, '=')) {
+        if (!cc_parse_expression(p))
+            return false;
+    } else {
+        cc_emit_imm(p, 0);
+    }
+    if (!cc_expect(p, ';'))
+        return false;
+    struct cc_var *var = cc_add_var(p, name);
+    if (!var)
+        return false;
+    cc_emit_store_var(p, var);
+    return !p->error;
+}
+
+static bool cc_parse_assignment(struct cc_parser *p, bool semicolon)
+{
+    char name[CC_VAR_NAME];
+    if (!cc_identifier(p, name)) {
+        cc_fail(p, "expected local variable assignment");
+        return false;
+    }
+    struct cc_var *var = cc_find_var(p, name);
+    if (!var) {
+        cc_fail(p, "unknown local variable");
+        return false;
+    }
+    if (!cc_expect(p, '=') || !cc_parse_expression(p))
+        return false;
+    if (semicolon && !cc_expect(p, ';'))
+        return false;
+    cc_emit_store_var(p, var);
+    return !p->error;
+}
+
 static bool cc_parse_block(struct cc_parser *p)
 {
     if (!cc_expect(p, '{'))
@@ -598,30 +676,32 @@ static bool cc_parse_statement(struct cc_parser *p)
         return cc_parse_block(p);
     if (cc_consume(p, ';'))
         return true;
-    if (cc_word(p, "int")) {
-        char name[CC_VAR_NAME];
-        if (!cc_identifier(p, name)) {
-            cc_fail(p, "expected local variable name");
-            return false;
-        }
-        if (cc_consume(p, '=')) {
-            if (!cc_parse_expression(p))
-                return false;
-        } else {
-            cc_emit_imm(p, 0);
-        }
-        if (!cc_expect(p, ';'))
-            return false;
-        struct cc_var *var = cc_add_var(p, name);
-        if (!var)
-            return false;
-        cc_emit_store_var(p, var);
-        return !p->error;
-    }
+    if (cc_word(p, "int"))
+        return cc_parse_declaration(p);
     if (cc_word(p, "return")) {
         if (!cc_parse_expression(p) || !cc_expect(p, ';'))
             return false;
         cc_emit_return(p);
+        return !p->error;
+    }
+    if (cc_word(p, "break")) {
+        if (!p->loop_depth) {
+            cc_fail(p, "loop control outside loop");
+            return false;
+        }
+        if (!cc_expect(p, ';'))
+            return false;
+        cc_emit_loop_jump(p, &p->loops[p->loop_depth - 1].break_chain);
+        return !p->error;
+    }
+    if (cc_word(p, "continue")) {
+        if (!p->loop_depth) {
+            cc_fail(p, "loop control outside loop");
+            return false;
+        }
+        if (!cc_expect(p, ';'))
+            return false;
+        cc_emit_loop_jump(p, &p->loops[p->loop_depth - 1].continue_chain);
         return !p->error;
     }
     if (cc_word(p, "puts") || cc_word(p, "print")) {
@@ -658,26 +738,83 @@ static bool cc_parse_statement(struct cc_parser *p)
             return false;
         cc_emit_test(p);
         size_t exit_jump = cc_emit_jz(p);
+        if (p->loop_depth >= CC_MAX_DEPTH) {
+            cc_fail(p, "too many nested loops");
+            return false;
+        }
+        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        memset(loop, 0, sizeof(*loop));
+        loop->continue_target = condition;
         if (!cc_parse_statement(p))
             return false;
         size_t back_jump = cc_emit_jmp(p);
         cc_patch_jump(p, back_jump, condition);
+        cc_patch_loop_chain(p, loop->continue_chain, loop->continue_target);
         cc_patch_jump(p, exit_jump, p->code_pos);
+        cc_patch_loop_chain(p, loop->break_chain, p->code_pos);
+        p->loop_depth--;
         return !p->error;
     }
-    char name[CC_VAR_NAME];
-    if (cc_identifier(p, name)) {
-        struct cc_var *var = cc_find_var(p, name);
-        if (!var) {
-            cc_fail(p, "unknown local variable");
+    if (cc_word(p, "for")) {
+        if (!cc_expect(p, '('))
+            return false;
+        if (!cc_consume(p, ';')) {
+            if (cc_word(p, "int")) {
+                if (!cc_parse_declaration(p))
+                    return false;
+            } else if (!cc_parse_assignment(p, true)) {
+                return false;
+            }
+        }
+
+        size_t condition = p->code_pos;
+        if (cc_consume(p, ';')) {
+            cc_emit_imm(p, 1);               /* for (; ;) 的恒真条件 */
+        } else if (!cc_parse_expression(p) || !cc_expect(p, ';')) {
             return false;
         }
-        if (!cc_expect(p, '=') || !cc_parse_expression(p) || !cc_expect(p, ';'))
+        cc_emit_test(p);
+        size_t exit_jump = cc_emit_jz(p);
+        size_t body_jump = cc_emit_jmp(p);
+
+        size_t iteration = p->code_pos;       /* continue 必须先执行迭代表达式 */
+        if (!cc_consume(p, ')')) {
+            cc_skip(p);
+            if (p->pos < p->length &&
+                (isalpha(p->source[p->pos]) || p->source[p->pos] == '_')) {
+                if (!cc_parse_assignment(p, false))
+                    return false;
+            } else if (!cc_parse_expression(p)) {
+                return false;
+            }
+            if (!cc_expect(p, ')'))
+                return false;
+        }
+        size_t condition_jump = cc_emit_jmp(p);
+        cc_patch_jump(p, condition_jump, condition);
+        cc_patch_jump(p, body_jump, p->code_pos);
+
+        if (p->loop_depth >= CC_MAX_DEPTH) {
+            cc_fail(p, "too many nested loops");
             return false;
-        cc_emit_store_var(p, var);
+        }
+        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        memset(loop, 0, sizeof(*loop));
+        loop->continue_target = iteration;
+        if (!cc_parse_statement(p))
+            return false;
+        size_t iteration_jump = cc_emit_jmp(p);
+        cc_patch_jump(p, iteration_jump, iteration);
+        cc_patch_loop_chain(p, loop->continue_chain, iteration);
+        cc_patch_jump(p, exit_jump, p->code_pos);
+        cc_patch_loop_chain(p, loop->break_chain, p->code_pos);
+        p->loop_depth--;
         return !p->error;
     }
-    cc_fail(p, "expected declaration/if/while/puts/return/assignment");
+    if (p->pos < p->length &&
+        (isalpha(p->source[p->pos]) || p->source[p->pos] == '_'))
+        return cc_parse_assignment(p, true);
+    cc_fail(p, "expected declaration/loop/puts/return/assignment");
     return false;
 }
 

@@ -106,6 +106,33 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/l.c int main(){int t=0\\;"
+            "for(int i=1\\;i<7\\;i=i+1){if(i==2)continue\\;"
+            "if(i==6)break\\;t=t+i\\;}i=0\\;while(i<4){i=i+1\\;"
+            "if(i==2)continue\\;t=t+i\\;}return t*2\\;};"
+            "fyxcc /home/user/l.c /home/user/l.elf;run /home/user/l.elf;"
+            "write /home/user/n.c int main(){int t=0\\;for(int i=0\\;i<4\\;i=i+1)"
+            "{int j=0\\;while(j<4){j=j+1\\;if(j==2)continue\\;if(i==2)break\\;"
+            "t=t+1\\;}}return t\\;};"
+            "fyxcc /home/user/n.c /home/user/n.elf;run /home/user/n.elf;"
+            "write /home/user/badloop.c int main(){break\\;};"
+            "fyxcc /home/user/badloop.c /home/user/badloop.elf;shutdown"
+        )
+        out, _ = run_case("loop-control", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/l.elf 退出码=42",
+               "for/break/continue 的 ring3 计算结果")
+        expect(out, "[run] /home/user/n.elf 退出码=9",
+               "嵌套循环的内层 break/continue 跳转隔离（3+3+0+3）")
+        expect(out, "loop control outside loop", "循环外 break 诊断")
+        print("  [PASS] C for/break/continue、嵌套 fixup、迭代路径与误用诊断")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 循环控制：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"
