@@ -47,6 +47,10 @@
 
 ## 4. fork / exec / wait
 
+- init、fork、run 的用户线程通过 `thread_create_embryo` 建立但暂不入队；
+  `uregs`、进程关联、PML4 与运行状态全部填写后才 `thread_start`，避免
+  调度器在初始化窗口中取出零 RIP/RSP 的现场。普通内核线程仍由
+  `thread_create` 直接启动。
 - fork 当前为全量复制用户页（正确优先，CoW 后续优化），复制父进程用户现场，
   子进程 RAX 改为 0；fd 表复制并增加管道端点或文件对象引用。
 - exec 先把名字、argv、envp 复制到内核栈，再从 `/bin/<name>` 或显式路径读取

@@ -81,6 +81,10 @@ void sched_start(void);                    /* 开启抢占，永不返回 */
 
 struct thread *thread_create(const char *name, thread_fn entry, void *arg,
                              int priority);
+/* 用户线程先以 EMBRYO 建立，填满 uregs/proc/pml4 后再启动，避免零现场竞态。 */
+struct thread *thread_create_embryo(const char *name, thread_fn entry,
+                                    void *arg, int priority);
+void thread_start(struct thread *t);
 void thread_exit(int code) NORETURN;
 void thread_yield(void);
 void thread_sleep_ms(u64 ms);

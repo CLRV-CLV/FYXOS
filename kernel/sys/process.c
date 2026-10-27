@@ -227,8 +227,9 @@ long sys_fork(void)
     list_insert_before(&parent->children, &child->child_link);
     parent->nr_children++;
 
-    struct thread *ct = thread_create(child->name, process_thread_entry, child,
-                                      parent->thread ? parent->thread->priority : 5);
+    struct thread *ct = thread_create_embryo(
+        child->name, process_thread_entry, child,
+        parent->thread ? parent->thread->priority : 5);
     if (!ct) {
         /* 已在上面挂入 children；失败回滚必须同时摘下，否则 wait 会等到
          * 一个状态为 UNUSED、地址空间也已释放的“子进程”。 */
@@ -249,6 +250,7 @@ long sys_fork(void)
     kprintf("[proc] fork: %llu -> %llu（%s）\n",
             (unsigned long long)parent->pid,
             (unsigned long long)child->pid, child->name);
+    thread_start(ct);
     return (long)child->pid;
 }
 
@@ -512,7 +514,7 @@ void process_start_init(void)
     }
     kfree(program);
 
-    struct thread *t = thread_create("init", process_thread_entry, p, 5);
+    struct thread *t = thread_create_embryo("init", process_thread_entry, p, 5);
     if (!t)
         panic("process: 无法为 init 建立线程");
 
@@ -524,6 +526,7 @@ void process_start_init(void)
 
     kprintf("[proc] init 就绪：pid=%llu entry=0x%llx\n",
             (unsigned long long)p->pid, (unsigned long long)p->entry);
+    thread_start(t);
 }
 
 /* 回收没有父进程等待的退出映像（包括完成自检后退出的 init）。 */
@@ -568,7 +571,7 @@ int process_run_wait(const char *name, int *exit_code)
         return rc;
     }
 
-    struct thread *t = thread_create(name, process_thread_entry, p, 5);
+    struct thread *t = thread_create_embryo(name, process_thread_entry, p, 5);
     if (!t) {
         process_free(p);
         return -FYX_ENOMEM;
@@ -578,6 +581,7 @@ int process_run_wait(const char *name, int *exit_code)
     t->pml4 = p->as.pml4;
     p->thread = t;
     p->state = PROC_RUNNABLE;
+    thread_start(t);
 
     while (p->state != PROC_ZOMBIE)
         thread_sleep_ms(1);

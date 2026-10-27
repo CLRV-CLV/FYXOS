@@ -184,8 +184,9 @@ void sched_init(void)
     memset(&g_stats, 0, sizeof(g_stats));
 }
 
-struct thread *thread_create(const char *name, thread_fn entry, void *arg,
-                             int priority)
+static struct thread *thread_create_internal(const char *name, thread_fn entry,
+                                              void *arg, int priority,
+                                              bool start_now)
 {
     if (!entry)
         return NULL;
@@ -223,11 +224,36 @@ struct thread *thread_create(const char *name, thread_fn entry, void *arg,
 
     list_insert_before(&g_all, &t->all_link);
     g_stats.nr_threads++;
-    enqueue_run(t);
+    if (start_now)
+        enqueue_run(t);
 
     spin_unlock(&g_sched_lock);
     irq_restore(flags);
     return t;
+}
+
+struct thread *thread_create(const char *name, thread_fn entry, void *arg,
+                             int priority)
+{
+    return thread_create_internal(name, entry, arg, priority, true);
+}
+
+struct thread *thread_create_embryo(const char *name, thread_fn entry,
+                                    void *arg, int priority)
+{
+    return thread_create_internal(name, entry, arg, priority, false);
+}
+
+void thread_start(struct thread *t)
+{
+    if (!t)
+        return;
+    u64 flags = irq_save_disable();
+    spin_lock(&g_sched_lock);
+    if (t->state == THREAD_EMBRYO)
+        thread_make_runnable(t);
+    spin_unlock(&g_sched_lock);
+    irq_restore(flags);
 }
 
 struct thread *current_thread(void)

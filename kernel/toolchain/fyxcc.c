@@ -1,7 +1,8 @@
 /* FYXOS — 小型 C 子集到 x86_64 静态 ELF 的原生编译器
  *
  * 支持：int main、局部整数变量、简单/复合赋值、算术/比较/移位/位/逻辑运算、
- * ++/--、puts/print 字符串、return、if/else、while/for、break/continue 与嵌套块。
+ * ++/--、puts/print 字符串、return、if/else、while/do…while/for、?:、
+ * break/continue 与嵌套块。
  * 生成代码直接使用
  * FYXOS SYSCALL ABI，
  * 不依赖宿主 libc、GCC 或外部链接器；变量在用户栈上，保持 ELF 段 RX。
@@ -329,6 +330,15 @@ static size_t cc_emit_jz(struct cc_parser *p)
 {
     cc_emit8(p, 0x0F);
     cc_emit8(p, 0x84);                         /* jz rel32 */
+    size_t pos = p->code_pos;
+    cc_emit32(p, 0);
+    return pos;
+}
+
+static size_t cc_emit_jnz(struct cc_parser *p)
+{
+    cc_emit8(p, 0x0F);
+    cc_emit8(p, 0x85);                         /* jnz rel32 */
     size_t pos = p->code_pos;
     cc_emit32(p, 0);
     return pos;
@@ -850,7 +860,20 @@ static bool cc_parse_logical_or(struct cc_parser *p)
 
 static bool cc_parse_expression(struct cc_parser *p)
 {
-    return cc_parse_logical_or(p);
+    if (!cc_parse_logical_or(p))
+        return false;
+    if (!cc_consume(p, '?'))
+        return !p->error;
+    cc_emit_test(p);
+    size_t false_jump = cc_emit_jz(p);
+    if (!cc_parse_expression(p) || !cc_expect(p, ':'))
+        return false;
+    size_t end_jump = cc_emit_jmp(p);
+    cc_patch_jump(p, false_jump, p->code_pos);
+    if (!cc_parse_expression(p))
+        return false;
+    cc_patch_jump(p, end_jump, p->code_pos);
+    return !p->error;
 }
 
 static void cc_emit_print(struct cc_parser *p, size_t data_offset, size_t length)
@@ -1065,6 +1088,30 @@ static bool cc_parse_statement(struct cc_parser *p)
         } else {
             cc_patch_jump(p, false_jump, p->code_pos);
         }
+        return !p->error;
+    }
+    if (cc_word(p, "do")) {
+        size_t body = p->code_pos;
+        if (p->loop_depth >= CC_MAX_DEPTH) {
+            cc_fail(p, "too many nested loops");
+            return false;
+        }
+        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        memset(loop, 0, sizeof(*loop));
+        if (!cc_parse_statement(p))
+            return false;
+        size_t condition = p->code_pos;
+        loop->continue_target = condition;
+        if (!cc_expect_word(p, "while") || !cc_expect(p, '(') ||
+            !cc_parse_expression(p) || !cc_expect(p, ')') ||
+            !cc_expect(p, ';'))
+            return false;
+        cc_emit_test(p);
+        size_t back_jump = cc_emit_jnz(p);
+        cc_patch_jump(p, back_jump, body);
+        cc_patch_chain(p, loop->continue_chain, condition);
+        cc_patch_chain(p, loop->break_chain, p->code_pos);
+        p->loop_depth--;
         return !p->error;
     }
     if (cc_word(p, "while")) {

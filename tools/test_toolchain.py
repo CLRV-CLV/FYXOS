@@ -197,6 +197,28 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/d.c int main(){int i=0\\;do{i++\\;if(i==3)continue\\;}"
+            "while(i<3)\\;if(i!=3)return 1\\;do{i++\\;}while(0)\\;"
+            "if(i!=4)return 2\\;return 42\\;};"
+            "fyxcc /home/user/d.c /home/user/d.elf;run /home/user/d.elf;"
+            "write /home/user/t.c int main(){int x=0\\;int y=0?++x:++x\\;"
+            "if(x!=1||y!=1)return 1\\;y=0?1:1?42:0\\;return y\\;};"
+            "fyxcc /home/user/t.c /home/user/t.elf;run /home/user/t.elf;shutdown"
+        )
+        out, _ = run_case("do-and-ternary", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/d.elf 退出码=42",
+               "do…while 至少一次与 continue 跳尾部条件")
+        expect(out, "[run] /home/user/t.elf 退出码=42",
+               "?: 单分支求值与右结合")
+        print("  [PASS] C do…while、循环尾条件 continue 与 ?: 单分支求值")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C do/条件运算：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"
