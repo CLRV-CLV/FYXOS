@@ -1,0 +1,53 @@
+{
+  "result": "PASS",
+  "file": "release/fyxos-developer-preview-launch.mp4",
+  "sha256": "d5162a6ffd8d19f510a9a4f64f2cf1969bea2f45e8781473a17efbddd45c6ae8",
+  "bytes": 13246357,
+  "durationSeconds": 180.011,
+  "video": {
+    "codec": "h264",
+    "width": 1920,
+    "height": 1080,
+    "pixelFormat": "yuvj420p",
+    "fps": 24,
+    "frames": 4320
+  },
+  "audio": {
+    "codec": "aac",
+    "channels": 2,
+    "outputSampleRate": 48000,
+    "decodedPeakDbfs": -1.4,
+    "decodedRmsDbfs": -19.01,
+    "tenSecondRmsDbfs": [
+      -32.91,
+      -27.21,
+      -23.32,
+      -22.89,
+      -19.5,
+      -18.23,
+      -19,
+      -18.12,
+      -17.85,
+      -16.4,
+      -17,
+      -24.48,
+      -18.11,
+      -15.11,
+      -17.99,
+      -31.31,
+      -17.11,
+      -18.43
+    ]
+  },
+  "checks": [
+    "container probe",
+    "4320 video packets",
+    "full H.264/AAC decode",
+    "180-second duration",
+    "1080p24 8-bit 4:2:0",
+    "stereo AAC",
+    "non-silent finished audio",
+    "SHA-256"
+  ],
+  "renderer": "Remotion 4.0.539"
+}

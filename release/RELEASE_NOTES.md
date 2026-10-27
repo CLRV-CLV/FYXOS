@@ -15,6 +15,10 @@ release 页面提供对应源码标签，不把未上传的文件称为 release 
 - `full-test.log`：干净全量 **80 PASS / 0 FAIL / RC=0**，编译诊断 0。
 - `boot-test.log`：发布镜像副本从 BIOS 第一条指令启动，运行 GCC 示例的证据。
 - `app-image-test.log`：自定义 hello 经 SDK 编译、打包、启动并退出 0 的证据。
+- `fyxos-developer-preview-launch.mp4`：180 秒、1920×1080、24 fps 中文发布片，
+  H.264＋立体声 AAC；使用真实截图/日志与原创合成配乐。
+- `video-verification.json`：最终 MP4 的 4320 帧、全流解码、音轨和 SHA-256 验收。
+- 可编辑 Remotion 工程位于源码树 `video/`，复现命令见 `video/README.md`。
 
 ## 产品文件
 
@@ -22,6 +26,8 @@ release 页面提供对应源码标签，不把未上传的文件称为 release 
 - [GCC C11 SDK](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-dev1/release/fyxos-0.1.0-dev1-sdk.tar.gz)
 - [SHA256 校验和](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-dev1/release/SHA256SUMS.txt)
 - [完整测试日志](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-dev1/release/full-test.log)
+- [三分钟发布片](fyxos-developer-preview-launch.mp4)（当前交付分支）
+- [Remotion 源工程](../video/README.md)（当前交付分支）
 
 ## 已验证的产品路径
 
