@@ -1,7 +1,8 @@
 /* FYXOS — 小型 C 子集到 x86_64 静态 ELF 的原生编译器
  *
- * 支持：int main、局部整数变量/赋值、四则运算、比较、puts/print 字符串、
- * return、if/else、while/for、break/continue 与嵌套块。生成代码直接使用
+ * 支持：int main、局部整数变量、简单/复合赋值、四则/比较、++/--、
+ * puts/print 字符串、return、if/else、while/for、break/continue 与嵌套块。
+ * 生成代码直接使用
  * FYXOS SYSCALL ABI，
  * 不依赖宿主 libc、GCC 或外部链接器；变量在用户栈上，保持 ELF 段 RX。
  * 这不是完整 C：没有函数调用、指针、数组、结构体、预处理器或 libc。
@@ -140,6 +141,37 @@ static bool cc_consume(struct cc_parser *p, char c)
     return false;
 }
 
+static bool cc_consume_operator(struct cc_parser *p, const char *operator)
+{
+    cc_skip(p);
+    size_t length = strlen(operator);
+    if (p->pos + length > p->length ||
+        memcmp(p->source + p->pos, operator, length) != 0)
+        return false;
+    p->pos += length;
+    return true;
+}
+
+static char cc_assignment_operator(struct cc_parser *p)
+{
+    cc_skip(p);
+    if (p->pos >= p->length)
+        return 0;
+    char op = p->source[p->pos];
+    if (op == '=') {
+        if (p->pos + 1 < p->length && p->source[p->pos + 1] == '=')
+            return 0;
+        p->pos++;
+        return op;
+    }
+    if ((op == '+' || op == '-' || op == '*' || op == '/') &&
+        p->pos + 1 < p->length && p->source[p->pos + 1] == '=') {
+        p->pos += 2;
+        return op;
+    }
+    return 0;
+}
+
 static bool cc_expect(struct cc_parser *p, char c)
 {
     if (cc_consume(p, c))
@@ -276,6 +308,14 @@ static void cc_emit_store_var(struct cc_parser *p, const struct cc_var *var)
     cc_emit8(p, 0x89);
     cc_emit8(p, 0x85);
     cc_emit32(p, (u32)(-(i32)var->offset));
+}
+
+static void cc_emit_increment(struct cc_parser *p, bool decrement)
+{
+    cc_emit8(p, 0x48);                         /* add/sub rax, imm8(1) */
+    cc_emit8(p, 0x83);
+    cc_emit8(p, decrement ? 0xE8 : 0xC0);
+    cc_emit8(p, 1);
 }
 
 static void cc_emit_test(struct cc_parser *p)
@@ -431,6 +471,24 @@ static bool cc_parse_expression(struct cc_parser *p);
 static bool cc_parse_primary(struct cc_parser *p)
 {
     cc_skip(p);
+    bool increment = cc_consume_operator(p, "++");
+    bool decrement = !increment && cc_consume_operator(p, "--");
+    if (increment || decrement) {
+        char name[CC_VAR_NAME];
+        if (!cc_identifier(p, name)) {
+            cc_fail(p, "expected variable after prefix operator");
+            return false;
+        }
+        struct cc_var *var = cc_find_var(p, name);
+        if (!var) {
+            cc_fail(p, "unknown local variable");
+            return false;
+        }
+        cc_emit_load_var(p, var);
+        cc_emit_increment(p, decrement);
+        cc_emit_store_var(p, var);
+        return !p->error;
+    }
     if (cc_consume(p, '-')) {
         if (!cc_parse_primary(p))
             return false;
@@ -458,6 +516,18 @@ static bool cc_parse_primary(struct cc_parser *p)
             return false;
         }
         cc_emit_load_var(p, var);
+        increment = cc_consume_operator(p, "++");
+        decrement = !increment && cc_consume_operator(p, "--");
+        if (increment || decrement) {
+            cc_emit8(p, 0x48);                 /* mov rcx, rax：保存旧值 */
+            cc_emit8(p, 0x89);
+            cc_emit8(p, 0xC1);
+            cc_emit_increment(p, decrement);
+            cc_emit_store_var(p, var);
+            cc_emit8(p, 0x48);                 /* mov rax, rcx：后缀返回旧值 */
+            cc_emit8(p, 0x89);
+            cc_emit8(p, 0xC8);
+        }
         return !p->error;
     }
     cc_fail(p, "expected expression");
@@ -636,11 +706,58 @@ static bool cc_parse_assignment(struct cc_parser *p, bool semicolon)
         cc_fail(p, "unknown local variable");
         return false;
     }
-    if (!cc_expect(p, '=') || !cc_parse_expression(p))
+    char op = cc_assignment_operator(p);
+    if (!op) {
+        cc_fail(p, "expected assignment operator");
         return false;
+    }
+    if (op != '=') {
+        cc_emit_load_var(p, var);
+        cc_emit8(p, 0x50);                     /* push 左值旧值 */
+    }
+    if (!cc_parse_expression(p))
+        return false;
+    if (op != '=') {
+        cc_emit_right_operand(p);              /* rax=旧值，rcx=右表达式 */
+        if (op == '*') {
+            cc_emit8(p, 0x48);
+            cc_emit8(p, 0x0F);
+            cc_emit8(p, 0xAF);
+            cc_emit8(p, 0xC1);
+        } else if (op == '/') {
+            cc_emit8(p, 0x48);
+            cc_emit8(p, 0x99);
+            cc_emit8(p, 0x48);
+            cc_emit8(p, 0xF7);
+            cc_emit8(p, 0xF9);
+        } else {
+            cc_emit8(p, 0x48);
+            cc_emit8(p, op == '+' ? 0x01 : 0x29);
+            cc_emit8(p, 0xC8);
+        }
+    }
     if (semicolon && !cc_expect(p, ';'))
         return false;
     cc_emit_store_var(p, var);
+    return !p->error;
+}
+
+static bool cc_parse_assignment_or_expression(struct cc_parser *p,
+                                               bool semicolon)
+{
+    cc_skip(p);
+    size_t start = p->pos;
+    char name[CC_VAR_NAME];
+    bool assignment = false;
+    if (cc_identifier(p, name))
+        assignment = cc_assignment_operator(p) != 0;
+    p->pos = start;
+    if (assignment)
+        return cc_parse_assignment(p, semicolon);
+    if (!cc_parse_expression(p))
+        return false;
+    if (semicolon && !cc_expect(p, ';'))
+        return false;
     return !p->error;
 }
 
@@ -762,7 +879,7 @@ static bool cc_parse_statement(struct cc_parser *p)
             if (cc_word(p, "int")) {
                 if (!cc_parse_declaration(p))
                     return false;
-            } else if (!cc_parse_assignment(p, true)) {
+            } else if (!cc_parse_assignment_or_expression(p, true)) {
                 return false;
             }
         }
@@ -779,15 +896,8 @@ static bool cc_parse_statement(struct cc_parser *p)
 
         size_t iteration = p->code_pos;       /* continue 必须先执行迭代表达式 */
         if (!cc_consume(p, ')')) {
-            cc_skip(p);
-            if (p->pos < p->length &&
-                (isalpha(p->source[p->pos]) || p->source[p->pos] == '_')) {
-                if (!cc_parse_assignment(p, false))
-                    return false;
-            } else if (!cc_parse_expression(p)) {
-                return false;
-            }
-            if (!cc_expect(p, ')'))
+            if (!cc_parse_assignment_or_expression(p, false) ||
+                !cc_expect(p, ')'))
                 return false;
         }
         size_t condition_jump = cc_emit_jmp(p);
@@ -811,11 +921,7 @@ static bool cc_parse_statement(struct cc_parser *p)
         p->loop_depth--;
         return !p->error;
     }
-    if (p->pos < p->length &&
-        (isalpha(p->source[p->pos]) || p->source[p->pos] == '_'))
-        return cc_parse_assignment(p, true);
-    cc_fail(p, "expected declaration/loop/puts/return/assignment");
-    return false;
+    return cc_parse_assignment_or_expression(p, true);
 }
 
 static bool cc_parse_program(struct cc_parser *p)

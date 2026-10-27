@@ -133,6 +133,23 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/o.c int main(){int t=0\\;for(int i=0\\;i<8\\;i++)"
+            "{if(i==2)continue\\;t+=i\\;}int j=3\\;t+=++j\\;t+=j++\\;"
+            "t+=--j\\;t+=j--\\;t-=2\\;t*=2\\;t/=2\\;t+=2\\;return t\\;};"
+            "fyxcc /home/user/o.c /home/user/o.elf;run /home/user/o.elf;shutdown"
+        )
+        out, _ = run_case("operators", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/o.elf 退出码=42",
+               "复合赋值与前/后缀自增减的 ring3 计算结果")
+        print("  [PASS] C ++/--、+=/-=/*=/= 与惯用 for 迭代表达式")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 运算符：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"

@@ -10,9 +10,10 @@
 > 主链，但不代表完整 C/JavaScript、GCC/LLVM、多语言、自举或完整运行库已经交付。
 > FyxJS 边界详见 [`../design/fyxjs.md`](../design/fyxjs.md)。
 >
-> 当前 C 前端还支持 `while/for`、`break/continue` 与嵌套块；`continue` 在
-> `for` 中会先执行迭代表达式，循环外控制语句有明确诊断。`++/--`、自定义函数、
-> 指针、数组、结构体、预处理器与 libc 仍未实现。
+> 当前 C 前端还支持 `while/for`、`break/continue`、局部变量前/后缀 `++/--`、
+> `+=`、`-=`、`*=`、`/=` 与嵌套块；`continue` 在
+> `for` 中会先执行迭代表达式，循环外控制语句有明确诊断。自定义函数、指针、
+> 数组、结构体、预处理器与 libc 仍未实现。
 
 ---
 
