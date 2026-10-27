@@ -175,6 +175,28 @@ def main():
 
     try:
         keys = (
+            "ifconfig;ping;"
+            "write /home/user/l.c int main(){int x=0\\;if(0&&++x)return 1\\;"
+            "if(1||++x)x+=3\\;if(x!=3)return 2\\;if(!x||!!x!=1)return 3\\;"
+            "if(!(x&&3))return 4\\;return 42\\;};"
+            "fyxcc /home/user/l.c /home/user/l.elf;run /home/user/l.elf;"
+            "write /home/user/q.c int main(){if((1||0&&0)!=1)return 1\\;"
+            "if((0||3)!=1)return 2\\;if((3&&0)!=0)return 3\\;return 42\\;};"
+            "fyxcc /home/user/q.c /home/user/q.elf;run /home/user/q.elf;shutdown"
+        )
+        out, _ = run_case("logical-operators", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        expect(out, "[run] /home/user/l.elf 退出码=42",
+               "&&/|| 短路副作用与 ! 结果")
+        expect(out, "[run] /home/user/q.elf 退出码=42",
+               "逻辑运算 0/1 归一化与优先级")
+        print("  [PASS] C !、&&/|| 真实短路、0/1 归一化与优先级")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C 逻辑运算：{error}")
+
+    try:
+        keys = (
             "ifconfig;ping;ide /home/user/studio.c;"
             "iint main(){puts(\"STUDIO_OK\")\\;return(11)\\;}\\e"
             "\\cS\\cB\\cR\\cQ;shutdown"

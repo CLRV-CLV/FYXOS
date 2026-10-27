@@ -1,6 +1,6 @@
 /* FYXOS — 小型 C 子集到 x86_64 静态 ELF 的原生编译器
  *
- * 支持：int main、局部整数变量、简单/复合赋值、算术/比较/移位/位运算、
+ * 支持：int main、局部整数变量、简单/复合赋值、算术/比较/移位/位/逻辑运算、
  * ++/--、puts/print 字符串、return、if/else、while/for、break/continue 与嵌套块。
  * 生成代码直接使用
  * FYXOS SYSCALL ABI，
@@ -350,8 +350,18 @@ static void cc_emit_loop_jump(struct cc_parser *p, size_t *chain)
     *chain = pos;
 }
 
-static void cc_patch_loop_chain(struct cc_parser *p, size_t chain,
-                                size_t target)
+static void cc_emit_condition_chain(struct cc_parser *p, u8 condition,
+                                    size_t *chain)
+{
+    cc_emit8(p, 0x0F);
+    cc_emit8(p, condition);                    /* jz/jnz rel32 */
+    size_t pos = p->code_pos;
+    cc_emit32(p, (u32)*chain);
+    *chain = pos;
+}
+
+static void cc_patch_chain(struct cc_parser *p, size_t chain,
+                           size_t target)
 {
     while (chain) {
         if (chain + 4 > p->code_pos) {
@@ -487,6 +497,17 @@ static bool cc_parse_primary(struct cc_parser *p)
         cc_emit_load_var(p, var);
         cc_emit_increment(p, decrement);
         cc_emit_store_var(p, var);
+        return !p->error;
+    }
+    if (cc_consume(p, '!')) {
+        if (!cc_parse_primary(p))
+            return false;
+        cc_emit_test(p);
+        cc_emit8(p, 0xB8);                     /* mov eax, 0（保留 ZF） */
+        cc_emit32(p, 0);
+        cc_emit8(p, 0x0F);                     /* sete al */
+        cc_emit8(p, 0x94);
+        cc_emit8(p, 0xC0);
         return !p->error;
     }
     if (cc_consume(p, '~')) {
@@ -769,9 +790,67 @@ static bool cc_parse_bitor(struct cc_parser *p)
     }
 }
 
+static void cc_emit_boolean(struct cc_parser *p)
+{
+    cc_emit_test(p);
+    cc_emit8(p, 0xB8);                         /* mov eax, 0（不改 flags） */
+    cc_emit32(p, 0);
+    cc_emit8(p, 0x0F);                         /* setne al */
+    cc_emit8(p, 0x95);
+    cc_emit8(p, 0xC0);
+}
+
+static bool cc_parse_logical_and(struct cc_parser *p)
+{
+    if (!cc_parse_bitor(p))
+        return false;
+    size_t false_chain = 0;
+    u32 operators = 0;
+    while (cc_consume_operator(p, "&&")) {
+        cc_emit_test(p);
+        cc_emit_condition_chain(p, 0x84, &false_chain); /* 假：跳过所有 RHS */
+        operators++;
+        if (!cc_parse_bitor(p))
+            return false;
+    }
+    if (!operators)
+        return !p->error;
+    cc_emit_boolean(p);
+    size_t end_jump = cc_emit_jmp(p);
+    size_t false_target = p->code_pos;
+    cc_emit_imm(p, 0);
+    cc_patch_chain(p, false_chain, false_target);
+    cc_patch_jump(p, end_jump, p->code_pos);
+    return !p->error;
+}
+
+static bool cc_parse_logical_or(struct cc_parser *p)
+{
+    if (!cc_parse_logical_and(p))
+        return false;
+    size_t true_chain = 0;
+    u32 operators = 0;
+    while (cc_consume_operator(p, "||")) {
+        cc_emit_test(p);
+        cc_emit_condition_chain(p, 0x85, &true_chain); /* 真：跳过所有 RHS */
+        operators++;
+        if (!cc_parse_logical_and(p))
+            return false;
+    }
+    if (!operators)
+        return !p->error;
+    cc_emit_boolean(p);
+    size_t end_jump = cc_emit_jmp(p);
+    size_t true_target = p->code_pos;
+    cc_emit_imm(p, 1);
+    cc_patch_chain(p, true_chain, true_target);
+    cc_patch_jump(p, end_jump, p->code_pos);
+    return !p->error;
+}
+
 static bool cc_parse_expression(struct cc_parser *p)
 {
-    return cc_parse_bitor(p);
+    return cc_parse_logical_or(p);
 }
 
 static void cc_emit_print(struct cc_parser *p, size_t data_offset, size_t length)
@@ -1005,9 +1084,9 @@ static bool cc_parse_statement(struct cc_parser *p)
             return false;
         size_t back_jump = cc_emit_jmp(p);
         cc_patch_jump(p, back_jump, condition);
-        cc_patch_loop_chain(p, loop->continue_chain, loop->continue_target);
+        cc_patch_chain(p, loop->continue_chain, loop->continue_target);
         cc_patch_jump(p, exit_jump, p->code_pos);
-        cc_patch_loop_chain(p, loop->break_chain, p->code_pos);
+        cc_patch_chain(p, loop->break_chain, p->code_pos);
         p->loop_depth--;
         return !p->error;
     }
@@ -1054,9 +1133,9 @@ static bool cc_parse_statement(struct cc_parser *p)
             return false;
         size_t iteration_jump = cc_emit_jmp(p);
         cc_patch_jump(p, iteration_jump, iteration);
-        cc_patch_loop_chain(p, loop->continue_chain, iteration);
+        cc_patch_chain(p, loop->continue_chain, iteration);
         cc_patch_jump(p, exit_jump, p->code_pos);
-        cc_patch_loop_chain(p, loop->break_chain, p->code_pos);
+        cc_patch_chain(p, loop->break_chain, p->code_pos);
         p->loop_depth--;
         return !p->error;
     }
