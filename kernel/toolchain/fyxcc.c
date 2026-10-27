@@ -19,8 +19,11 @@
 #define CC_MAX_FIXUPS  128u
 #define CC_MAX_VARS    16u
 #define CC_VAR_NAME    24u
-#define CC_FRAME_SIZE  (CC_MAX_VARS * 8u)
 #define CC_MAX_DEPTH   32u
+#define CC_MAX_CASES   64u
+#define CC_FRAME_SIZE  ((CC_MAX_VARS + CC_MAX_DEPTH) * 8u)
+#define CC_CONTROL_LOOP   1u
+#define CC_CONTROL_SWITCH 2u
 #define CC_BASE        0x400000ull
 #define CC_CODE_OFFSET 128u                 /* EHDR + PHDR，按 8 字节对齐 */
 
@@ -35,10 +38,20 @@ struct cc_var {
     u32 offset;                             /* rbp - offset */
 };
 
-struct cc_loop {
+struct cc_control {
     size_t break_chain;                     /* disp32 中暂存下一条链位置 */
     size_t continue_chain;
     size_t continue_target;
+    size_t default_target;
+    struct cc_var switch_var;               /* 独立的帧内隐藏槽，不占 16 个源码变量 */
+    u32 id;                                 /* 全局唯一，避免顺序 switch 复用深度编号 */
+    u8 kind;
+};
+
+struct cc_case {
+    i64 value;
+    size_t target;
+    u32 owner;
 };
 
 struct cc_parser {
@@ -54,8 +67,11 @@ struct cc_parser {
     struct cc_var vars[CC_MAX_VARS];
     u32 var_count;
     u32 depth;
-    struct cc_loop loops[CC_MAX_DEPTH];
-    u32 loop_depth;
+    struct cc_control controls[CC_MAX_DEPTH];
+    u32 control_depth;
+    struct cc_case cases[CC_MAX_CASES];
+    u32 case_count;
+    u32 switch_serial;
     int error;
     struct fyxcc_diagnostic *diagnostic;
 };
@@ -255,6 +271,18 @@ static void cc_emit_imm(struct cc_parser *p, i64 value)
     cc_emit8(p, 0x48);                         /* mov rax, sign-extended imm32 */
     cc_emit8(p, 0xC7);
     cc_emit8(p, 0xC0);
+    cc_emit32(p, (u32)(i32)value);
+}
+
+static void cc_emit_imm_rcx(struct cc_parser *p, i64 value)
+{
+    if (value < -0x80000000ll || value > 0x7FFFFFFFll) {
+        cc_fail(p, "integer literal does not fit int32");
+        return;
+    }
+    cc_emit8(p, 0x48);                         /* mov rcx, sign-extended imm32 */
+    cc_emit8(p, 0xC7);
+    cc_emit8(p, 0xC1);
     cc_emit32(p, (u32)(i32)value);
 }
 
@@ -1042,24 +1070,74 @@ static bool cc_parse_statement(struct cc_parser *p)
         cc_emit_return(p);
         return !p->error;
     }
+    bool is_default = cc_word(p, "default");
+    if (is_default || cc_word(p, "case")) {
+        if (!p->control_depth ||
+            p->controls[p->control_depth - 1].kind != CC_CONTROL_SWITCH) {
+            cc_fail(p, "case/default outside switch");
+            return false;
+        }
+        struct cc_control *sw = &p->controls[p->control_depth - 1];
+        u32 owner = sw->id;
+        if (is_default) {
+            if (!cc_expect(p, ':'))
+                return false;
+            if (sw->default_target) {
+                cc_fail(p, "duplicate default label");
+                return false;
+            }
+            sw->default_target = p->code_pos;
+            return true;
+        }
+
+        bool negative = cc_consume(p, '-');
+        if (!negative)
+            cc_consume(p, '+');
+        i64 value;
+        if (!cc_parse_number(p, &value) || !cc_expect(p, ':'))
+            return false;
+        value = negative ? -value : value;
+        for (u32 i = 0; i < p->case_count; i++) {
+            if (p->cases[i].owner == owner && p->cases[i].value == value) {
+                cc_fail(p, "duplicate case value");
+                return false;
+            }
+        }
+        if (p->case_count >= CC_MAX_CASES) {
+            cc_fail(p, "too many case labels");
+            return false;
+        }
+        struct cc_case *label = &p->cases[p->case_count++];
+        label->value = value;
+        label->target = p->code_pos;
+        label->owner = owner;
+        return true;
+    }
     if (cc_word(p, "break")) {
-        if (!p->loop_depth) {
-            cc_fail(p, "loop control outside loop");
+        if (!p->control_depth) {
+            cc_fail(p, "break outside loop/switch");
             return false;
         }
         if (!cc_expect(p, ';'))
             return false;
-        cc_emit_loop_jump(p, &p->loops[p->loop_depth - 1].break_chain);
+        cc_emit_loop_jump(p, &p->controls[p->control_depth - 1].break_chain);
         return !p->error;
     }
     if (cc_word(p, "continue")) {
-        if (!p->loop_depth) {
-            cc_fail(p, "loop control outside loop");
+        struct cc_control *loop = NULL;
+        for (u32 i = p->control_depth; i > 0; i--) {
+            if (p->controls[i - 1].kind == CC_CONTROL_LOOP) {
+                loop = &p->controls[i - 1];
+                break;
+            }
+        }
+        if (!loop) {
+            cc_fail(p, "continue outside loop");
             return false;
         }
         if (!cc_expect(p, ';'))
             return false;
-        cc_emit_loop_jump(p, &p->loops[p->loop_depth - 1].continue_chain);
+        cc_emit_loop_jump(p, &loop->continue_chain);
         return !p->error;
     }
     if (cc_word(p, "puts") || cc_word(p, "print")) {
@@ -1090,14 +1168,61 @@ static bool cc_parse_statement(struct cc_parser *p)
         }
         return !p->error;
     }
+    if (cc_word(p, "switch")) {
+        if (!cc_expect(p, '(') || !cc_parse_expression(p) ||
+            !cc_expect(p, ')'))
+            return false;
+        if (p->control_depth >= CC_MAX_DEPTH) {
+            cc_fail(p, "too many nested controls");
+            return false;
+        }
+        struct cc_control *sw = &p->controls[p->control_depth++];
+        memset(sw, 0, sizeof(*sw));
+        sw->kind = CC_CONTROL_SWITCH;
+        sw->switch_var.offset = (CC_MAX_VARS + p->control_depth) * 8u;
+        cc_emit_store_var(p, &sw->switch_var);
+
+        size_t dispatch_jump = cc_emit_jmp(p);
+        u32 owner = p->switch_serial++;
+        sw->id = owner;
+        if (!cc_parse_statement(p))
+            return false;
+        size_t fallthrough_jump = cc_emit_jmp(p);
+        cc_patch_jump(p, dispatch_jump, p->code_pos);
+
+        for (u32 i = 0; i < p->case_count; i++) {
+            struct cc_case *label = &p->cases[i];
+            if (label->owner != owner)
+                continue;
+            cc_emit_imm_rcx(p, label->value);
+            cc_emit_load_var(p, &sw->switch_var);
+            cc_emit8(p, 0x48);                 /* cmp rax, rcx */
+            cc_emit8(p, 0x39);
+            cc_emit8(p, 0xC8);
+            size_t match_jump = cc_emit_jz(p);
+            cc_patch_jump(p, match_jump, label->target);
+        }
+        size_t no_match_jump = cc_emit_jmp(p);
+        if (sw->default_target)
+            cc_patch_jump(p, no_match_jump, sw->default_target);
+
+        size_t end = p->code_pos;
+        cc_patch_jump(p, fallthrough_jump, end);
+        if (!sw->default_target)
+            cc_patch_jump(p, no_match_jump, end);
+        cc_patch_chain(p, sw->break_chain, end);
+        p->control_depth--;
+        return !p->error;
+    }
     if (cc_word(p, "do")) {
         size_t body = p->code_pos;
-        if (p->loop_depth >= CC_MAX_DEPTH) {
+        if (p->control_depth >= CC_MAX_DEPTH) {
             cc_fail(p, "too many nested loops");
             return false;
         }
-        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        struct cc_control *loop = &p->controls[p->control_depth++];
         memset(loop, 0, sizeof(*loop));
+        loop->kind = CC_CONTROL_LOOP;
         if (!cc_parse_statement(p))
             return false;
         size_t condition = p->code_pos;
@@ -1111,7 +1236,7 @@ static bool cc_parse_statement(struct cc_parser *p)
         cc_patch_jump(p, back_jump, body);
         cc_patch_chain(p, loop->continue_chain, condition);
         cc_patch_chain(p, loop->break_chain, p->code_pos);
-        p->loop_depth--;
+        p->control_depth--;
         return !p->error;
     }
     if (cc_word(p, "while")) {
@@ -1120,12 +1245,13 @@ static bool cc_parse_statement(struct cc_parser *p)
             return false;
         cc_emit_test(p);
         size_t exit_jump = cc_emit_jz(p);
-        if (p->loop_depth >= CC_MAX_DEPTH) {
+        if (p->control_depth >= CC_MAX_DEPTH) {
             cc_fail(p, "too many nested loops");
             return false;
         }
-        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        struct cc_control *loop = &p->controls[p->control_depth++];
         memset(loop, 0, sizeof(*loop));
+        loop->kind = CC_CONTROL_LOOP;
         loop->continue_target = condition;
         if (!cc_parse_statement(p))
             return false;
@@ -1134,7 +1260,7 @@ static bool cc_parse_statement(struct cc_parser *p)
         cc_patch_chain(p, loop->continue_chain, loop->continue_target);
         cc_patch_jump(p, exit_jump, p->code_pos);
         cc_patch_chain(p, loop->break_chain, p->code_pos);
-        p->loop_depth--;
+        p->control_depth--;
         return !p->error;
     }
     if (cc_word(p, "for")) {
@@ -1169,12 +1295,13 @@ static bool cc_parse_statement(struct cc_parser *p)
         cc_patch_jump(p, condition_jump, condition);
         cc_patch_jump(p, body_jump, p->code_pos);
 
-        if (p->loop_depth >= CC_MAX_DEPTH) {
+        if (p->control_depth >= CC_MAX_DEPTH) {
             cc_fail(p, "too many nested loops");
             return false;
         }
-        struct cc_loop *loop = &p->loops[p->loop_depth++];
+        struct cc_control *loop = &p->controls[p->control_depth++];
         memset(loop, 0, sizeof(*loop));
+        loop->kind = CC_CONTROL_LOOP;
         loop->continue_target = iteration;
         if (!cc_parse_statement(p))
             return false;
@@ -1183,7 +1310,7 @@ static bool cc_parse_statement(struct cc_parser *p)
         cc_patch_chain(p, loop->continue_chain, iteration);
         cc_patch_jump(p, exit_jump, p->code_pos);
         cc_patch_chain(p, loop->break_chain, p->code_pos);
-        p->loop_depth--;
+        p->control_depth--;
         return !p->error;
     }
     return cc_parse_assignment_or_expression(p, true);

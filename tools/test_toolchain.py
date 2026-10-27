@@ -125,7 +125,7 @@ def main():
                "for/break/continue 的 ring3 计算结果")
         expect(out, "[run] /home/user/n.elf 退出码=9",
                "嵌套循环的内层 break/continue 跳转隔离（3+3+0+3）")
-        expect(out, "loop control outside loop", "循环外 break 诊断")
+        expect(out, "break outside loop/switch", "循环/switch 外 break 诊断")
         print("  [PASS] C for/break/continue、嵌套 fixup、迭代路径与误用诊断")
     except Exception as error:
         failures += 1
@@ -216,6 +216,43 @@ def main():
     except Exception as error:
         failures += 1
         print(f"  [FAIL] C do/条件运算：{error}")
+
+    try:
+        keys = (
+            "ifconfig;ping;"
+            "write /home/user/w.c int main(){int t=0\\;switch(2){case 1:t=1\\;break\\;"
+            "case 0x2:t=3\\;case 3:t+=4\\;break\\;default:t=99\\;}"
+            "switch(9){case 1:t=0\\;default:t+=35\\;}return t\\;};"
+            "fyxcc /home/user/w.c /home/user/w.elf;run /home/user/w.elf;"
+            "write /home/user/v.c int main(){int t=0\\;switch(1){case 1:"
+            "switch(2){case 1:t=1\\;break\\;case 2:t=6\\;break\\;}break\\;"
+            "default:t=9\\;}t*=7\\;return t\\;};"
+            "fyxcc /home/user/v.c /home/user/v.elf;run /home/user/v.elf;"
+            "write /home/user/x.c int main(){int t=0\\;int i=0\\;while(i<2){i++\\;"
+            "switch(i){case 1:t+=1\\;break\\;default:t+=2\\;break\\;}}t*=14\\;return t\\;};"
+            "fyxcc /home/user/x.c /home/user/x.elf;run /home/user/x.elf;"
+            "write /home/user/z.c int main(){int t=0\\;for(int j=0\\;j<3\\;j++){"
+            "switch(j){case 1:continue\\;default:t+=1\\;break\\;}}t*=21\\;return t\\;};"
+            "fyxcc /home/user/z.c /home/user/z.elf;run /home/user/z.elf;"
+            "write /home/user/badcase.c int main(){case 1:return 1\\;};"
+            "fyxcc /home/user/badcase.c /home/user/badcase.elf;"
+            "write /home/user/dup.c int main(){switch(1){case 1:break\\;"
+            "case 1:break\\;}return 0\\;};"
+            "fyxcc /home/user/dup.c /home/user/dup.elf;shutdown"
+        )
+        out, _ = run_case("switch-control", args.kernel, output_dir,
+                          keys, args.max_seconds)
+        for name, label in (("w", "fallthrough/default 与顺序 switch"),
+                            ("v", "嵌套 switch 与隐藏表达式槽"),
+                            ("x", "switch break 不退外层 while"),
+                            ("z", "switch 内 continue 继续外层 for")):
+            expect(out, f"[run] /home/user/{name}.elf 退出码=42", label)
+        expect(out, "case/default outside switch", "switch 外 case 诊断")
+        expect(out, "duplicate case value", "重复 case 诊断")
+        print("  [PASS] C switch/case/default、fallthrough、诊断与循环控制隔离")
+    except Exception as error:
+        failures += 1
+        print(f"  [FAIL] C switch 控制：{error}")
 
     try:
         keys = (
