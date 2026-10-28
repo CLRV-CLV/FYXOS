@@ -29,7 +29,7 @@ class GitTest:
         cmd = [
             sys.executable, str(ROOT / "tools/fyxemu.py"),
             "--image", str(self.disk), "--kernel", str(self.kernel),
-            "--mode", "quick", "--keys", keys, "--keys-after", READY,
+            "--mode", "quick", "--shell", "--keys", keys, "--keys-after", READY,
             "--max-seconds", str(self.max_seconds),
         ]
         if writeback:

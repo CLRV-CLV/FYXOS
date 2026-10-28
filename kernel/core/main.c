@@ -26,6 +26,7 @@
 #include <fyxos/boot_info.h>
 #include <fyxos/process.h>
 #include <fyxos/storage.h>
+#include <fyxos/desktop.h>
 #include <fyxos/net.h>
 
 extern u8 _kernel_end[], _kernel_phys_end[];
@@ -207,8 +208,8 @@ void kmain(struct fyx_boot_info *bi)
 
     /*
      * 阶段 G/H：存储就绪后，从 /bin/init 拉起第一个用户进程。
-     * init 完成验收后退出，调度器会把 CPU 交回下面的内核 Shell；
-     * 这样用户态测试与原有的救援 Shell 可以共存。
+     * init 完成验收后退出，调度器会把 CPU 交回下面的桌面主循环；
+     * 这样用户态测试、默认桌面与救援 Shell 可以共存。
      */
     process_init();
     if (storage_init() != 0)
@@ -217,6 +218,13 @@ void kmain(struct fyx_boot_info *bi)
     if (net_rc != 0)
         kprintf("[net] 初始化未完成（错误 %d），仅提供离线功能\n", net_rc);
     process_start_init();
+
+    /* 所有正常启动都以桌面为默认界面，不要求用户先理解内核 Shell。
+     * 无图形设备或用户按 Q/Esc 时才进入救援 Shell。 */
+    kprintf("\n[desktop] 默认进入桌面；Q/Esc 进入救援 Shell\n");
+    int rc = desktop_run();
+    if (rc != 0)
+        kprintf("[desktop] 图形设备不可用（错误 %d），进入救援 Shell\n", rc);
 
     kprintf("\n[shell] 进入 FYXOS 内核 Shell，输入 help 查看命令\n");
     shell_run();

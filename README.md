@@ -22,17 +22,18 @@
 
 当前分支另新增可实跑的 **Win64 PE32+、静态 Linux x86_64、gzip/未压缩
 amd64 DEB** 纵切片：真实 kernel32 导入与退出码 24、gzip DEB 内未修改
-glibc ELF 与退出码 23 均在 quick 和完整 BIOS 路径验收；干净全量为
-**101 PASS / 0 FAIL**。这不是任意 EXE/DEB 或动态 Linux 兼容声明，精确边界见
+glibc ELF 与退出码 23 均在 quick 和完整 BIOS 路径验收；加入 VBE 自动桌面后
+干净全量为 **113 PASS / 0 FAIL**。这不是任意 EXE/DEB 或动态 Linux 兼容声明，精确边界见
 [`docs/design/win64-compat.md`](docs/design/win64-compat.md) 与
 [`docs/design/linux-deb-compat.md`](docs/design/linux-deb-compat.md)。
 
-另有可导入 VMware 的 **`build/fyxos.iso` BIOS Live 成品**：`make iso` 即可生成，
-不需要 xorriso/mkisofs，也不需要另加虚拟硬盘。自研 ATAPI 后端在脱离 BIOS 后
-直接读取光盘内的 FYXOS.IMG，FYXFS 写入进入 RAM overlay；完整 BIOS→ATAPI→
-ring3 双启动及易失性验收为 **10 PASS / 0 FAIL**。VMware 设置和 IDE/BGA/网卡
-边界见 [`docs/vmware-live.md`](docs/vmware-live.md)；尚未在真实 VMware 中实测，
-也不宣称支持 UEFI 或 Live 修改持久保存。
+另有可导入 VMware 的 **`FYXOS-VMware-Desktop.iso` 桌面 Live 成品**：
+`make deliver-iso` 在仓库根目录生成明确文件，不需要 xorriso/mkisofs 或另加
+虚拟硬盘。stage2 通过 VBE 设置 800×600×32 LFB，ATAPI 后端读取光盘系统
+分区，init 后 **自动进入桌面**，Q/Esc 才进入救援 Shell。FYXFS 写入进入 RAM
+overlay；ISO 结构、自动桌面、双启动及易失性验收为 **11 PASS / 0 FAIL**。
+VMware 设置和 IDE/VBE/网卡边界见 [`docs/vmware-live.md`](docs/vmware-live.md)；
+尚未在真实 VMware 中实测，也不宣称支持 UEFI 或 Live 修改持久保存。
 
 从第一条 BIOS 指令到持久化文件系统、用户态进程、IPv4/UDP 网络和快照回滚，
 全链路在 Unicorn 测试台上实跑验证：
@@ -43,7 +44,7 @@ BIOS → MBR(stage1) → stage2(A20/E820/ELF 装载/建页表) → 长模式
      → 抢占式调度 → ATA/FYXFS 挂载 → RTL8139/DHCP/ARP/ICMP
      → 从 /bin/init 装载用户 ELF → ring 3 UDP/文件 I/O / fork / exec / 管道
      → ifconfig/ping/救援 Shell / 快照回滚
-     → BGA LFB → 软件背 buffer → 三窗口桌面/主题/焦点 → PNG 帧校验
+     → VBE/BGA LFB → 软件背 buffer → 三窗口桌面/主题/焦点 → PNG 帧校验
      → FYXFS C 源码 → 内置 fyxcc → x86_64 ELF → ring3 运行/退出码
      → 开源 GCC C11 SDK → 独立 /bin/gcc-c11-demo → ring3 输出与退出码 42
      → FYX Studio 编辑/保存/编译/运行 → 正常关机；另有跨重启与 ATA 写点断电恢复测试
@@ -57,8 +58,9 @@ python3 -m venv .venv && .venv/bin/pip install unicorn
 
 # 2. 构建可启动镜像与开源 GCC C11 SDK
 make image          # build/fyxos.img；预装 /bin/gcc-c11-demo
-make iso            # build/fyxos.iso；VMware Legacy BIOS Live 试用
-make test-iso       # ISO 结构、ATAPI 完整启动、Live 写入与重启易失性
+make iso            # build/fyxos.iso；自动桌面的 VMware Legacy BIOS Live
+make deliver-iso    # 根目录 FYXOS-VMware-Desktop.iso，直接用于 VMware
+make test-iso       # ISO、自动 VBE 桌面、ATAPI、Live 写入与重启易失性
 make sdk            # build/fyxos-sdk/ 与 build/fyxos-sdk.tar.gz
 ./build/fyxos-sdk/bin/fyx-gcc sdk/examples/c11-demo.c -o build/my-demo.elf
 # 可选：把自己的 GCC ELF 预装进新镜像（guest 路径仍为 /bin/gcc-c11-demo）
@@ -66,12 +68,12 @@ make app-image APP=build/my-demo.elf
 
 # 3. 全链路实跑（从 BIOS 第一条指令开始）
 .venv/bin/python tools/fyxemu.py --image build/fyxos.img \
-    --kernel build/fyxos.elf --mode full-boot \
-    --keys "help;uname;mem;ps;test;desktop;desktop next;desktop theme;ifconfig;ping;sleep 120;shutdown" \
+    --kernel build/fyxos.elf --mode full-boot --desktop-test \
+    --keys "ntq;help;uname;mem;ps;test;ifconfig;ping;sleep 120;shutdown" \
     --keys-after "[init] 全部通过"
 ```
 
-进入 Shell 后执行 `run /bin/gcc-c11-demo`，应看到 `GCC_C11_OK` 和退出码 42。
+在桌面按 Q 进入救援 Shell 后执行 `run /bin/gcc-c11-demo`，应看到 `GCC_C11_OK` 和退出码 42。
 这个程序由配套 SDK 的开源 GCC 编译，使用指针、数组、结构体、枚举、函数指针
 和 `_Static_assert`，不是内置 fyxcc 的子集产物。SDK 当前在宿主编译 FYXOS ELF；
 不把宿主 GCC 描述为已经在 guest 内运行。构建兼容验收包还需要宿主的
@@ -96,7 +98,7 @@ run win64 /bin/win64-demo.exe
 
 ```bash
 .venv/bin/python tools/fyxemu.py --image build/fyxos.img \
-    --kernel build/fyxos.elf --mode quick --keys "ps;shutdown" \
+    --kernel build/fyxos.elf --mode quick --shell --keys "ps;shutdown" \
     --keys-after "[init] 全部通过"
 ```
 
@@ -118,7 +120,7 @@ run win64 /bin/win64-demo.exe
 | 管道与 fd | `kernel/sys/pipe.c` | 管道/文件/UDP socket 统一 fd，fork 引用、跨 exec、EOF |
 | ATA/ATAPI 块设备 | `kernel/drivers/ata.c` | ATA IDENTIFY/LBA28 PIO/FLUSH；ATAPI PACKET/READ(10) Live CD 与 RAM overlay |
 | RTL8139 网络 | `kernel/drivers/rtl8139.c`、`kernel/net/` | ARP/IPv4、DHCP/ICMP、UDP checksum、DNS 重传/TTL 缓存/TCP 回退与 ring3 socket |
-| BGA 图形栈 | `kernel/drivers/bga.c`、`kernel/gfx/` | 800×600×32 LFB、VMM NOCACHE 映射、软件背 buffer、光栅/字体、present |
+| VBE/BGA 图形栈 | `boot/stage2_16.S`、`kernel/drivers/vbe.c`、`bga.c`、`kernel/gfx/` | VBE 模式枚举/boot_info 交接与 BGA 回退，800×600×32 LFB、NOCACHE 映射、软件背 buffer |
 | 首版桌面 | `kernel/gfx/desktop.c` | 三窗口焦点/z-order、阴影/dock、明暗主题、键盘交互 |
 | 开源 GCC C11 SDK | `sdk/`、`tools/mksdk.py` | 宿主 GCC 完整 C11 前端、CRT/链接脚本、最小运行库、SDK 压缩包与预装 ring3 示例 |
 | Linux x86_64 纵切片 | `kernel/sys/linux_syscall.c`、`elf_load.c` | 静态 ET_EXEC、独立 syscall 编号/errno、auxv、FS/TLS、brk/mmap、SSE2 上下文与单调时钟 |
@@ -136,14 +138,14 @@ run win64 /bin/win64-demo.exe
 | 驱动 | `kernel/arch/x86_64/` | 串口、键盘(Set-1 QWERTY)、PIT、VGA 文本 |
 | 内核 Shell | `kernel/shell/shell.c` | 66 条命令，含 FYX 原生动词、desktop、ide、fyxcc/fyxjs/run、deb、git、resolve/ifconfig/ping 与跨系统子集别名 |
 | 自检 | `kernel/tests/selftest.c` | 9 项，全部通过 |
-| 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS + 可写 ATA/只读 ATAPI + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
+| 测试台 | `tools/fyxemu.py`、`tools/rtl8139.py`、`tools/bga.py` | 假 BIOS/VBE + 可写 ATA/只读 ATAPI + 网络对端 + BGA/PNG + 断电注入 + 两段式引擎 |
 | 镜像工具 | `tools/mkimage.py`、`tools/mkiso.py` | 生成 32 MiB 磁盘镜像与自包含 ISO9660/El Torito Live ISO |
 
 ### 自动化验收
 
 ```bash
-make test           # 既有 101 项 + ISO 结构/双启动/Live 易失性 10 项
-make test-iso       # 只重跑 ISO/ATAPI 专项（10 项）
+make test           # 干净全量 113 项（含 VBE、自动桌面与 ISO 11 项）
+make test-iso       # 只重跑 ISO/VBE 桌面/ATAPI/Live 专项（11 项）
 make test-sdk      # GCC 独立编译、ELF64 W^X、预装示例 ring3 运行
 make test-compat   # 两种 DEB、Win64、负例、退出码及 quick/full-boot CRC 回归
 make test-network   # DNS 重传/TTL 缓存、TCP 重传、UDP checksum 与 ICMP
@@ -158,7 +160,7 @@ make test-storage   # 只重跑存储集成测试
 重新启动，验证旧/新事务内容且 `fsck=0`。状态镜像和日志放在
 `build/storage-test/`。
 
-图形首版仅支持 BGA 800×600 软件光栅化；没有 GPU/Vulkan、多显示器、鼠标、
+图形首版支持 VBE/BGA 800×600 软件光栅化，RAW 与 Live ISO 正常启动均自动进入桌面；没有 GPU/Vulkan、多显示器、鼠标、
 用户态窗口协议、完整字体/输入法和真实 RTC。桌面是内核态首版合成器，不能据此
 宣称完整 FyxWay/FyxUI 或 120Hz。fyxcc 目前支持多个 `int` 函数和一个无参
 `int main`，每函数最多 16 个局部/参数整数、4 个栈传参，支持嵌套与递归调用、

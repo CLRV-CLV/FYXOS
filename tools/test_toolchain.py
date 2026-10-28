@@ -21,7 +21,7 @@ def run_case(name, kernel, output_dir, keys, max_seconds, *, png=False):
     cmd = [
         sys.executable, str(ROOT / "tools/fyxemu.py"),
         "--kernel", str(kernel), "--mode", "quick",
-        "--keys", keys, "--keys-after", READY,
+        "--shell", "--keys", keys, "--keys-after", READY,
         "--test", "--max-seconds", str(max_seconds),
     ]
     png_path = output_dir / f"{name}.png"

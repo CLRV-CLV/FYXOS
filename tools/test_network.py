@@ -36,7 +36,7 @@ def run_dns_case(kernel: str, output_dir: Path, max_seconds: int) -> str:
     )
     cmd = [
         sys.executable, str(ROOT / "tools/fyxemu.py"),
-        "--kernel", kernel, "--mode", "quick", "--keys", keys,
+        "--kernel", kernel, "--mode", "quick", "--shell", "--keys", keys,
         "--keys-after", READY, "--test", "--max-seconds", str(max_seconds),
     ]
     result = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True,

@@ -1,4 +1,4 @@
-# 阶段 J：BGA 软件图形栈与首版桌面
+# 阶段 J：VBE/BGA 软件图形栈与首版桌面
 
 ## 边界
 
@@ -7,7 +7,9 @@ FyxWay/FyxUI 生态，也不是 GPU 驱动。没有使用现成内核、桌面�
 
 已实现：
 
-- Bochs Graphics Array（BGA）运行时探测、模式设置和线性帧缓冲映射；
+- stage2 在 BIOS 阶段通过 VBE `4F00/4F01/4F02` 枚举模式，选择 800×600×32 DirectColor LFB 并填写 `boot_info`；内核以 NOCACHE 映射物理帧缓冲；
+- Bochs Graphics Array（BGA）运行时探测、模式设置和线性帧缓冲映射，作为无 VBE 时的回退；
+- Live ISO 完成 init 后自动进入桌面，Q/Esc 才进入救援 Shell；
 - 800×600、32 bpp、BGRX8888 小端像素格式；
 - RAM 背 buffer → 软件光栅化 → LFB present 的双缓冲路径；
 - 像素、矩形、边框、圆角矩形、圆、直线和内置 5×7 位图字体；
@@ -30,8 +32,8 @@ gfx.c      背 buffer 光栅化（clipping、文字、圆角、线条）
        ▼
 present    按 pitch 逐行复制到 HHDM 中的设备 LFB
        │
-       ▼
-bga.c      0x1ce/0x1cf 端口，800×600×32，LFB 物理地址 0xE0000000
+       ├─ vbe.c  boot_info 中的固件 LFB（完整 BIOS/VMware 优先路径）
+       └─ bga.c  0x1ce/0x1cf 端口回退路径，物理地址 0xE0000000
 ```
 
 BGA 驱动先写 `ID=0xB0C5` 并检查返回值，再设置 XRES/YRES/BPP、虚拟尺寸和
@@ -39,11 +41,16 @@ BGA 驱动先写 `ID=0xB0C5` 并检查返回值，再设置 XRES/YRES/BPP、虚�
 页 flags 包含 `VMM_WRITE|VMM_NOEXEC|VMM_NOCACHE`；这不是把设备内存当普通
 RAM，也没有把 LFB 地址硬编码成宿主指针。
 
-首版刻意不修改 BIOS/VBE 引导协议：`boot_info` 中预留的 framebuffer 字段仍
-留给后续 GOP/VBE 路径。没有 BGA 时，`gfx_init()` 返回错误，文本 Shell 继续
-可用；这与“无图形设备就死机”的玩具实现不同。
+VBE 模式查询只在 stage2 的实模式阶段执行；内核不再调用 BIOS。stage2 检查
+分辨率、32 bpp、DirectColor 的 R/G/B 掩码位置、pitch 和 LFB 地址，成功后
+填写 `boot_info.framebuffer_*`。`vbe.c` 用 `vmm_map()` 以
+`VMM_WRITE|VMM_NOEXEC|VMM_NOCACHE` 映射该物理区域；BGA 则保留上述端口
+探测路径。两者都没有时，`gfx_init()` 返回错误，文本救援 Shell 继续可用。
 
 ## 桌面操作
+
+RAW 与 Live ISO 的正常启动都默认执行 `desktop_run`，因此用户先看到桌面；
+按 Q/Esc 后仍可在救援 Shell 手工使用以下命令：
 
 ```text
 desktop                 启动并呈现一帧（默认暗色、WELCOME 聚焦）
@@ -65,18 +72,20 @@ make test-graphics
 
 # 单独观察并导出最后一帧
 .venv/bin/python tools/fyxemu.py --kernel build/fyxos.elf --mode quick \
-  --keys 'desktop;desktop next;desktop theme;desktop info;shutdown' \
+  --desktop-test --keys 'ntq;desktop info;shutdown' \
   --keys-after '[init] 全部通过' \
   --fb-output build/desktop.png --test --max-seconds 90
 ```
 
-`make test` 的 full-boot/quick 脚本也执行桌面三帧、焦点/主题切换和
-`desktop info`，并分别保存 `build/full-desktop.png`、`build/quick-desktop.png`。
+`make test` 的 full-boot 脚本执行 VBE 模式枚举、`boot_info` 交接和桌面三帧，
+quick 脚本则执行 BGA 回退路径；两者都验证焦点/主题、`desktop info` 和 PNG，
+分别保存 `build/full-desktop.png`、`build/quick-desktop.png`。`make test-iso`
+另验证 Live ISO 自动桌面先于救援 Shell，并导出实际 VBE 帧。
 `tools/test_graphics.py` 额外验证：
 
 1. `desktop run` 的 N/T/R/Q 产生四帧并返回 Shell；
 2. PNG 是真实 800×600 RGB、scanline/filter 正确且含多种颜色；
-3. guest 日志的 FNV-1a 与宿主直接读取 BGA framebuffer 的结果相同；
+3. guest 日志的 FNV-1a 与宿主直接读取 VBE/BGA framebuffer 的结果相同；
 4. `--no-gfx` 下返回清晰错误，救援 Shell 仍能正常关机。
 
 台架的 framebuffer 是与 guest RAM 分开的 `mem_map_ptr` 物理区域。PNG 从该
@@ -84,7 +93,7 @@ make test-graphics
 
 ## 尚未实现
 
-- GOP/VBE 启动期取 framebuffer、多显示器、模式枚举和热插拔；
+- UEFI GOP、多显示器、运行时模式切换和热插拔；
 - 鼠标、窗口拖动/缩放、合成协议、用户态图形客户端和真正的窗口管理器；
 - GPU/ Vulkan 后端、DMA-buf、硬件光标、垂直同步和 120 Hz 承诺；
 - 亚像素抗锯齿、完整 Unicode 字体、输入法、剪贴板和桌面搜索；

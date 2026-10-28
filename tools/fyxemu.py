@@ -302,6 +302,8 @@ class FyxEmu:
         self.tlb_cr3 = None
         self.last_cr3 = None
         self.trace_io = False
+        self.vbe_active = False
+        self.vbe_mode = None
         self.net = None if no_net else RTL8139Device(self, quiet)
         self.bga = None if no_gfx else BGADevice(self, quiet)
         self.fb_output = fb_output
@@ -714,6 +716,80 @@ class FyxEmu:
         return struct.unpack("<I", self.phys_read(addr + KLOG_OFF_PANIC, 4))[0] != 0
 
     # -------------------------------- BIOS --------------------------------
+    def _bios_ax(self, uc, value):
+        eax = uc.reg_read(UC_X86_REG_EAX)
+        uc.reg_write(UC_X86_REG_EAX, (eax & 0xFFFF0000) | value)
+
+    @staticmethod
+    def _vbe_mode_info(mode):
+        info = bytearray(256)
+        if mode not in (0x140, 0x141):
+            return None
+        width, height = (800, 600) if mode == 0x140 else (1024, 768)
+        pitch = width * 4
+        struct.pack_into("<H", info, 0, 0x0081)  # supported + LFB
+        struct.pack_into("<H", info, 16, pitch)
+        struct.pack_into("<H", info, 18, width)
+        struct.pack_into("<H", info, 20, height)
+        info[22] = 8
+        info[23] = 16
+        info[24] = 1
+        info[25] = 32
+        info[27] = 6                         # DirectColor
+        info[31:39] = bytes((8, 16, 8, 8, 8, 0, 8, 24))
+        struct.pack_into("<I", info, 40, 0xE0000000)
+        return info
+
+    def bios_video(self, uc):
+        eax = uc.reg_read(UC_X86_REG_EAX)
+        ax = eax & 0xFFFF
+        ah = (eax >> 8) & 0xFF
+        if ah == 0x0E:
+            ch = eax & 0xFF
+            self.bios_text.append(ch)
+            if self.show_bios:
+                sys.stdout.write(chr(ch) if 32 <= ch < 127 else ".")
+                sys.stdout.flush()
+            return
+        if ax not in (0x4F00, 0x4F01, 0x4F02):
+            return
+        if not self.bga:
+            self._bios_ax(uc, 0x014F)       # function failed
+            return
+        if ax == 0x4F00:
+            es = uc.reg_read(UC_X86_REG_ES)
+            di = uc.reg_read(UC_X86_REG_EDI) & 0xFFFF
+            address = (es << 4) + di
+            info = bytearray(512)
+            info[0:4] = b"VESA"
+            struct.pack_into("<H", info, 4, 0x0300)
+            struct.pack_into("<H", info, 14, 0x6400)
+            struct.pack_into("<H", info, 16, 0)
+            struct.pack_into("<H", info, 18, 64)
+            self.phys_write(0x6400, struct.pack("<HHH", 0x141, 0x140, 0xFFFF))
+            self.phys_write(address, info)
+            self._bios_ax(uc, 0x004F)
+            return
+        if ax == 0x4F01:
+            mode = uc.reg_read(UC_X86_REG_ECX) & 0xFFFF
+            info = self._vbe_mode_info(mode)
+            if info is None:
+                self._bios_ax(uc, 0x014F)
+                return
+            es = uc.reg_read(UC_X86_REG_ES)
+            di = uc.reg_read(UC_X86_REG_EDI) & 0xFFFF
+            self.phys_write((es << 4) + di, info)
+            self._bios_ax(uc, 0x004F)
+            return
+        bx = uc.reg_read(UC_X86_REG_EBX) & 0xFFFF
+        mode = bx & 0x1FF
+        if mode not in (0x140, 0x141) or not (bx & 0x4000):
+            self._bios_ax(uc, 0x014F)
+            return
+        self.vbe_active = True
+        self.vbe_mode = mode
+        self._bios_ax(uc, 0x004F)
+
     def reg16(self, uc, name):
         """阶段 1 里读 16/32 位通用寄存器"""
         table = {
@@ -723,13 +799,7 @@ class FyxEmu:
 
     def bios_int(self, uc, intno):
         if intno == 0x10:
-            ah = (uc.reg_read(UC_X86_REG_EAX) >> 8) & 0xFF
-            if ah == 0x0E:
-                ch = uc.reg_read(UC_X86_REG_EAX) & 0xFF
-                self.bios_text.append(ch)
-                if self.show_bios:
-                    sys.stdout.write(chr(ch) if 32 <= ch < 127 else ".")
-                    sys.stdout.flush()
+            self.bios_video(uc)
             return
         if intno == 0x13:
             self.bios_disk(uc)
@@ -1555,7 +1625,7 @@ class FyxEmu:
 # --------------------------------------------------------------------------
 # 测试模式
 # --------------------------------------------------------------------------
-def run_selfcheck(emu: FyxEmu) -> int:
+def run_selfcheck(emu: FyxEmu, desktop_test=False) -> int:
     out = emu.console_out.decode("utf-8", "replace")
     checks = [
         ("内核启动横幅", "FYXOS"),
@@ -1580,12 +1650,14 @@ def run_selfcheck(emu: FyxEmu) -> int:
         ("用户态时钟与堆", "堆已增长"),
         ("未发生 panic", not emu.panic_happened()),
     ]
-    if "desktop" in emu.key_script or "[desktop] frame=" in out:
+    if desktop_test or "desktop" in emu.key_script:
         frames = re.findall(
             r"\[desktop\] frame=(\d+) focus=([A-Z]+) theme=(dark|light) "
             r"checksum=0x([0-9a-fA-F]{8})", out)
         checks.extend([
-            ("BGA 800x600 LFB", "[gfx] BGA LFB 800x600x32 phys=0xe0000000" in out),
+            ("VBE/BGA 800x600 LFB",
+             "[gfx] VBE LFB 800x600x32 phys=0xe0000000" in out or
+             "[gfx] BGA LFB 800x600x32 phys=0xe0000000" in out),
             ("软件背 buffer", "软件背 buffer phys=" in out),
             ("桌面首帧", len(frames) >= 1 and frames[0][0] == "1" and
              frames[0][1] == "WELCOME" and frames[0][2] == "dark"),
@@ -1594,6 +1666,9 @@ def run_selfcheck(emu: FyxEmu) -> int:
             ("guest/host framebuffer 校验一致", bool(frames) and emu.bga is not None and
              int(frames[-1][3], 16) == emu.bga.checksum()),
         ])
+        if emu.vbe_active:
+            checks.append(("BIOS VBE boot_info 交接",
+                           "[gfx] VBE LFB 800x600x32" in out))
     failures = 0
     log("")
     log("================ 自动化检查 ================")
@@ -1618,6 +1693,10 @@ def main() -> int:
     ap.add_argument("--keys", default="", help="注入的键盘输入脚本")
     ap.add_argument("--keys-after", default=None,
                     help="看到指定内核日志后才开始注入 --keys")
+    ap.add_argument("--shell", action="store_true",
+                    help="自动桌面出现后先按 Q，再把 --keys 交给救援 Shell")
+    ap.add_argument("--desktop-test", action="store_true",
+                    help="在 --test 中验收自动桌面首帧、焦点、主题与帧校验")
     ap.add_argument("--show-bios", action="store_true", help="显示 BIOS 屏幕输出")
     ap.add_argument("--quiet", action="store_true", help="不实时回显内核输出")
     ap.add_argument("--test", action="store_true", help="跑自动化检查")
@@ -1648,10 +1727,20 @@ def main() -> int:
         ap.error("--iso 仅支持 full-boot 模式")
     if args.iso and (args.writeback or args.disk_output or args.power_fail_after):
         ap.error("Live ISO 不写回介质，也不支持 ATA 断电注入")
+    if args.shell and not args.keys:
+        ap.error("--shell 需要同时提供 --keys")
+    if args.desktop_test and not args.test:
+        ap.error("--desktop-test 需要同时提供 --test")
+
+    keys = args.keys
+    if args.shell and not args.no_gfx:
+        # 正常启动先进入桌面；自动化明确按 Q 后才注入 Shell 命令。
+        # --no-gfx 是独立的救援路径，本来就直接进入 Shell，不能多送一个 q。
+        keys = "q;" + keys
 
     try:
         emu = FyxEmu(image=args.image, iso=args.iso, kernel=args.kernel, ram_mb=args.ram_mb,
-                 mode=args.mode, keys=args.keys, show_bios=args.show_bios,
+                 mode=args.mode, keys=keys, show_bios=args.show_bios,
                  max_seconds=args.max_seconds, quiet=args.quiet,
                  tick_every=args.tick_every, chunk=args.chunk,
                  keys_after=args.keys_after, writeback=args.writeback,
@@ -1663,9 +1752,9 @@ def main() -> int:
         print(f"fyxemu: 无法加载输入介质：{exc}", file=sys.stderr)
         return 2
     emu.trace_io = args.trace_io
-    if args.keys:
+    if keys:
         # 命令分隔符仍是分号；\; 允许把 C/脚本源码中的字面分号送进 Shell。
-        script = args.keys.replace("\\;", "\x01")
+        script = keys.replace("\\;", "\x01")
         script = script.replace(";", "\n").replace("\\n", "\n")
         script = script.replace("\x01", ";")
         if not script.endswith("\n"):
@@ -1687,7 +1776,7 @@ def main() -> int:
         log(f"[fyxemu] 内核请求停机：{label}")
 
     if args.test:
-        failures = run_selfcheck(emu)
+        failures = run_selfcheck(emu, args.desktop_test)
         rc = 0 if (rc == 0 and failures == 0 and emu.shutdown_code == EXIT_OK) else 1
         log(f"[fyxemu] 测试{'通过' if rc == 0 else '失败'}")
     elif emu.shutdown_code not in (None, EXIT_OK):

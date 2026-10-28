@@ -58,7 +58,7 @@ def compile_examples(sdk: Path, output: Path) -> None:
 def run_guest(kernel: Path, output: Path) -> None:
     command = [
         sys.executable, ROOT / "tools" / "fyxemu.py", "--kernel", kernel,
-        "--mode", "quick", "--keys",
+        "--mode", "quick", "--shell", "--keys",
         "ifconfig;ping;run /bin/gcc-c11-demo;shutdown",
         "--keys-after", READY, "--test", "--max-seconds", "90",
     ]

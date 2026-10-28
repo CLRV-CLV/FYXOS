@@ -17,6 +17,11 @@
 #define BI_VERSION_OFF  0x04
 #define BI_E820_COUNT   0x08
 #define BI_BOOT_DRIVE   0x0C
+#define BI_FB_ADDR      0x38
+#define BI_FB_PITCH     0x40
+#define BI_FB_WIDTH     0x44
+#define BI_FB_HEIGHT    0x48
+#define BI_FB_BPP       0x4C
 #define BI_E820_TABLE   0x50
 #define E820_MAX        64
 #define E820_ENTRY_SIZE 24
@@ -36,6 +41,11 @@
  * stage2_32 一看不是 ELF 就直接 FATAL。
  */
 #define KERNEL_BUF_LIN  0x10000     /* == KERNEL_STAGE_ADDR，实模式可达 */
+
+/* VBE 临时缓冲区位于 boot_info 实际最大末端 0x5650 之上；进入长模式后
+ * 0x6200 仍会由测试台 trampoline 复用，因此这里不保留任何运行时指针。 */
+#define VBE_CTRL_BUF    0x6000
+#define VBE_MODE_BUF    0x6200
 
     .section .text16, "ax"
     .code16
@@ -63,6 +73,10 @@ _stage2_start:
 
     mov     si, offset s2_loaded
     call    print_string
+
+    /* BIOS 仍可调用时枚举 VBE，优先取得 VMware/兼容固件的 800x600x32 LFB。
+     * 失败只表示没有 VBE 桌面，内核会继续尝试 BGA 或进入救援 Shell。 */
+    call    setup_vbe
 
     /* ---------------- 进入 32 位保护模式 -------------------------------- */
     cli
@@ -149,6 +163,104 @@ e820_finished:
     mov     dword ptr [BOOT_INFO + 0x34], eax
     ret
 
+/* setup_vbe: 枚举 VBE mode list，选择 800x600x32 DirectColor + LFB。
+ * boot_info.framebuffer_* 先清零；只有模式设置成功才一次性填写。 */
+setup_vbe:
+    xor     eax, eax
+    mov     ds, ax
+    mov     es, ax
+    mov     di, BOOT_INFO + BI_FB_ADDR
+    mov     ecx, 6                  /* 0x38..0x4F，共 24 字节 */
+    rep     stosd
+
+    mov     dword ptr [VBE_CTRL_BUF], 0x32454256  /* "VBE2" */
+    mov     ax, 0x4F00
+    mov     di, VBE_CTRL_BUF
+    int     0x10
+    cmp     ax, 0x004F
+    jne     vbe_done
+    cmp     dword ptr [VBE_CTRL_BUF], 0x41534556  /* "VESA" */
+    jne     vbe_done
+
+    mov     ax, word ptr [VBE_CTRL_BUF + 14]
+    mov     word ptr [vbe_mode_off], ax
+    mov     ax, word ptr [VBE_CTRL_BUF + 16]
+    mov     word ptr [vbe_mode_seg], ax
+
+vbe_loop:
+    mov     ax, word ptr [vbe_mode_seg]
+    mov     ds, ax
+    mov     si, word ptr [vbe_mode_off]
+    mov     cx, word ptr [si]
+    xor     ax, ax
+    mov     ds, ax
+    mov     es, ax
+    cmp     cx, 0xFFFF
+    je      vbe_done
+    add     word ptr [vbe_mode_off], 2
+    mov     word ptr [vbe_current], cx
+
+    mov     ax, 0x4F01
+    mov     di, VBE_MODE_BUF
+    int     0x10
+    cmp     ax, 0x004F
+    jne     vbe_loop
+    mov     ax, word ptr [VBE_MODE_BUF + 0]
+    and     ax, 0x0081              /* supported + linear framebuffer */
+    cmp     ax, 0x0081
+    jne     vbe_loop
+    cmp     word ptr [VBE_MODE_BUF + 18], 800
+    jne     vbe_loop
+    cmp     word ptr [VBE_MODE_BUF + 20], 600
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 25], 32
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 27], 6       /* DirectColor */
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 31], 8       /* R mask/position */
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 32], 16
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 33], 8       /* G mask/position */
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 34], 8
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 35], 8       /* B mask/position */
+    jne     vbe_loop
+    cmp     byte ptr [VBE_MODE_BUF + 36], 0
+    jne     vbe_loop
+    mov     ax, word ptr [VBE_MODE_BUF + 16]
+    cmp     ax, 800 * 4
+    jb      vbe_loop
+    test    ax, 7                   /* gfx_present() 以 u64 行复制 */
+    jnz     vbe_loop
+    cmp     dword ptr [VBE_MODE_BUF + 40], 0
+    je      vbe_loop
+
+    mov     bx, word ptr [vbe_current]
+    or      bx, 0x4000              /* 请求 LFB，而非 banked mode */
+    mov     ax, 0x4F02
+    int     0x10
+    cmp     ax, 0x004F
+    jne     vbe_loop
+
+    mov     eax, dword ptr [VBE_MODE_BUF + 40]
+    mov     dword ptr [BOOT_INFO + BI_FB_ADDR], eax
+    mov     dword ptr [BOOT_INFO + BI_FB_ADDR + 4], 0
+    xor     eax, eax
+    mov     ax, word ptr [VBE_MODE_BUF + 16]
+    mov     dword ptr [BOOT_INFO + BI_FB_PITCH], eax
+    mov     dword ptr [BOOT_INFO + BI_FB_WIDTH], 800
+    mov     dword ptr [BOOT_INFO + BI_FB_HEIGHT], 600
+    mov     word ptr [BOOT_INFO + BI_FB_BPP], 32
+    mov     word ptr [BOOT_INFO + BI_FB_BPP + 2], 0
+
+vbe_done:
+    xor     ax, ax
+    mov     ds, ax
+    mov     es, ax
+    ret
+
 /*
  * load_kernel: 读内核映像到 0x10000（KERNEL_STAGE_ADDR）。
  * 每次最多 64 扇区（32 KiB），规避 BIOS 单次传输上限。
@@ -212,6 +324,9 @@ krn_lba:        .long 0
 krn_left:       .long 0
 krn_linear:     .long 0
 krn_count:      .word 0
+vbe_mode_off:   .word 0
+vbe_mode_seg:   .word 0
+vbe_current:    .word 0
 
 s2_msg:         .asciz "FYXOS stage2\r\n"
 s2_loaded:      .asciz "kernel loaded\r\n"

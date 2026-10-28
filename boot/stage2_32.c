@@ -23,6 +23,11 @@ _Static_assert(offsetof(struct fyx_boot_info, kernel_size) == BI_KERNEL_SIZE, "B
 _Static_assert(offsetof(struct fyx_boot_info, kernel_virt) == BI_KERNEL_VIRT, "BI_KERNEL_VIRT");
 _Static_assert(offsetof(struct fyx_boot_info, hhdm_base) == BI_HHDM_BASE, "BI_HHDM_BASE");
 _Static_assert(offsetof(struct fyx_boot_info, total_memory) == BI_TOTAL_MEMORY, "BI_TOTAL_MEMORY");
+_Static_assert(offsetof(struct fyx_boot_info, framebuffer_addr) == BI_FB_ADDR, "BI_FB_ADDR");
+_Static_assert(offsetof(struct fyx_boot_info, framebuffer_pitch) == BI_FB_PITCH, "BI_FB_PITCH");
+_Static_assert(offsetof(struct fyx_boot_info, framebuffer_width) == BI_FB_WIDTH, "BI_FB_WIDTH");
+_Static_assert(offsetof(struct fyx_boot_info, framebuffer_height) == BI_FB_HEIGHT, "BI_FB_HEIGHT");
+_Static_assert(offsetof(struct fyx_boot_info, framebuffer_bpp) == BI_FB_BPP, "BI_FB_BPP");
 _Static_assert(offsetof(struct fyx_boot_info, e820) == BI_E820_TABLE, "BI_E820_TABLE");
 
 /* ---- 页表标志 ---------------------------------------------------------- */

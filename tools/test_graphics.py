@@ -78,8 +78,8 @@ def main():
     failures = 0
     try:
         out, png = run_case(
-            "interactive", args.kernel, output_dir, [],
-            "desktop run;ntrq;ifconfig;ping;shutdown", args.max_seconds, test=True)
+            "interactive", args.kernel, output_dir, ["--desktop-test"],
+            "ntrq;ifconfig;ping;shutdown", args.max_seconds, test=True)
         if "[desktop] 交互：" not in out or "frames=4" not in out:
             raise RuntimeError("N/T/R/Q 没有产生预期的四帧")
         if "focus=NETWORK theme=light" not in out:

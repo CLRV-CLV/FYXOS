@@ -98,7 +98,7 @@ static void draw_window_content(const struct desktop_window *w,
         gfx_fill_round_rect(x, y + 52, 174, 58, 8, p->window_muted);
         gfx_fill_round_rect(x + 186, y + 52, 174, 58, 8, p->window_muted);
         gfx_draw_text(x + 14, y + 64, "38 SYSCALLS", p->accent, 2);
-        gfx_draw_text(x + 200, y + 64, "37 COMMANDS", p->accent2, 2);
+        gfx_draw_text(x + 200, y + 64, "66 COMMANDS", p->accent2, 2);
         gfx_draw_text(x + 14, y + 88, "RING3 + FD ABI", p->text, 1);
         gfx_draw_text(x + 200, y + 88, "COW RESTORE", p->text, 1);
         gfx_draw_text(x, y + 132, "FYXFS / HOME PRESERVED", p->muted, 1);

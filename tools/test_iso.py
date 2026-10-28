@@ -106,6 +106,7 @@ class IsoTest:
             "--iso", str(self.iso), "--kernel", str(self.kernel),
             "--mode", "full-boot", "--keys", keys, "--keys-after", READY,
             "--max-seconds", str(self.max_seconds),
+            "--fb-output", str(self.work / f"{name}.png"),
         ]
         with log_path.open("wb") as stream:
             result = subprocess.run(cmd, cwd=ROOT, stdout=stream,
@@ -124,9 +125,22 @@ class IsoTest:
         before = hashlib.sha256(self.data).hexdigest()
         out = self.boot(
             "live-session",
-            f"write {LIVE_FILE} {LIVE_TEXT};cat {LIVE_FILE};sync;"
+            f"q;write {LIVE_FILE} {LIVE_TEXT};cat {LIVE_FILE};sync;"
             f"unmount;mount;cat {LIVE_FILE};cp {LIVE_FILE} /tmp/iso-live-copy;"
             f"stat {LIVE_FILE};stat /tmp/iso-live-copy;fsck;df;shutdown")
+        frame = out.find("[desktop] frame=1")
+        shell = out.find("[shell] 进入")
+        self.require("[gfx] VBE LFB 800x600x32" in out and frame >= 0 and
+                     (shell < 0 or frame < shell),
+                     "ISO 没有在救援 Shell 前自动进入 VBE 桌面")
+        guest_frames = re.findall(
+            r"\[desktop\] frame=\d+ .*checksum=0x([0-9a-f]+)", out)
+        host_frames = re.findall(
+            r"framebuffer 已保存.*checksum=0x([0-9a-f]+)", out)
+        self.require(guest_frames and host_frames and
+                     guest_frames[-1] == host_frames[-1],
+                     "自动桌面 PNG 与 guest 帧校验和不一致")
+        self.passed("ISO 默认自动进入 VBE 桌面，Q 才进入救援 Shell；PNG 校验一致")
         payload = (LIVE_TEXT + "\n").encode("ascii")
         crc = binascii.crc32(payload) & 0xFFFFFFFF
         original_stat = rf"{LIVE_FILE}: node=\d+ type=file size={len(payload)} crc32=0x{crc:08x}"
@@ -141,7 +155,7 @@ class IsoTest:
                      "Live overlay 文件系统 fsck 未通过")
         self.passed("完整 BIOS→ATAPI→ring3；Live 写入、重挂、读回与 fsck 通过")
 
-        out = self.boot("live-reboot", f"cat {LIVE_FILE};fsck;shutdown")
+        out = self.boot("live-reboot", f"q;cat {LIVE_FILE};fsck;shutdown")
         self.require(f"cat: {LIVE_FILE}:" in out and " -8" in out and
                      LIVE_TEXT not in out,
                      "重启后上一会话 Live 文件仍然存在")

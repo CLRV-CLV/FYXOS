@@ -42,7 +42,7 @@ struct fyx_e820_entry {
 
 /*
  * 固定偏移布局（见上方物理内存图，基址 0x5000）：
- *   0x00 magic            0x28 hhdm_base          0x4A fb_bpp
+ *   0x00 magic            0x28 hhdm_base          0x4C framebuffer_bpp
  *   0x04 version          0x30 total_memory       0x50 e820[]
  *   0x08 e820_count       0x38 framebuffer_addr
  *   0x0C boot_drive       0x40 framebuffer_pitch
@@ -84,6 +84,11 @@ struct fyx_boot_info {
 #define BI_KERNEL_VIRT      0x20
 #define BI_HHDM_BASE        0x28
 #define BI_TOTAL_MEMORY     0x30
+#define BI_FB_ADDR          0x38
+#define BI_FB_PITCH         0x40
+#define BI_FB_WIDTH         0x44
+#define BI_FB_HEIGHT        0x48
+#define BI_FB_BPP           0x4C
 #define BI_E820_TABLE       0x50
 
 #define BOOT_INFO_ADDR      0x5000u

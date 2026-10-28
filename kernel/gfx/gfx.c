@@ -1,6 +1,7 @@
 /* FYXOS — 软件像素、矩形、圆角、线条、5x7 字体与双缓冲 blit */
 #include <fyxos/gfx.h>
 #include <fyxos/bga.h>
+#include <fyxos/vbe.h>
 #include <fyxos/mm.h>
 #include <fyxos/lib.h>
 
@@ -99,9 +100,23 @@ int gfx_init(void)
     if (g_ready)
         return FYX_OK;
     struct bga_info info;
-    int rc = bga_init(&info);
-    if (rc != 0)
-        return rc;
+    struct vbe_info vbe;
+    int rc = vbe_init(&vbe);
+    if (rc == 0) {
+        info.address = vbe.address;
+        info.physical = vbe.physical;
+        info.width = vbe.width;
+        info.height = vbe.height;
+        info.pitch = vbe.pitch;
+        info.bpp = vbe.bpp;
+        info.size = vbe.size;
+    } else {
+        if (rc != -FYX_ENOSYS)
+            return rc;
+        rc = bga_init(&info);
+        if (rc != 0)
+            return rc;
+    }
     size_t pages = ALIGN_UP(info.size, PAGE_SIZE) / PAGE_SIZE;
     g_back_phys = pmm_alloc_frames(pages);
     if (g_back_phys == PMM_INVALID)

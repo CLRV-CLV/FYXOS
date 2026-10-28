@@ -36,7 +36,7 @@ class StorageTest:
         cmd = [
             self.python, str(self.emu),
             "--image", str(disk), "--kernel", str(self.kernel),
-            "--mode", "quick", "--keys", keys, "--keys-after", READY,
+            "--mode", "quick", "--shell", "--keys", keys, "--keys-after", READY,
             "--max-seconds", str(self.max_seconds),
         ]
         if writeback:

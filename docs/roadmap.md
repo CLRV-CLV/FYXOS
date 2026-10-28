@@ -23,7 +23,7 @@
 | G | 用户态核心：进程/ELF/`fork`/`exec`/`wait`/管道/最小 libc | ✅ 核心完成 |
 | H | 存储与文件系统 | ✅ 核心完成（ATA/ATAPI Live/FYXFS/VFS/断电测试） |
 | I | 网络栈 | 🟡 IPv4/UDP、DNS A 与 TCP 主动客户端 v1；IPv6/TLS/完整 TCP 待办 |
-| J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 BGA 软件桌面核心完成；完整 FyxWay/FyxUI 待办 |
+| J | 图形栈与桌面环境（"比 Win10 好看"） | 🟡 VBE/BGA 软件桌面与 ISO 自动入口完成；完整 FyxWay/FyxUI 待办 |
 | K | 工具链移植（LLVM / GCC / Rust / Go / …）+ git | 🟡 C/FyxJS 子集与 FYXGit v1 完成；完整工具链/Git 待办 |
 | L | FYX IDE | 🟡 单文件 Studio 编辑/构建/运行完成；完整 IDE 待办 |
 | M | 系统还原 | ✅ 核心完成（CoW 快照/回滚/保留 `/home`） |
@@ -35,7 +35,7 @@
 python3 -m venv .venv && .venv/bin/pip install unicorn
 make image
 .venv/bin/python tools/fyxemu.py --image build/fyxos.img \
-    --kernel build/fyxos.elf --mode full-boot \
+    --kernel build/fyxos.elf --mode full-boot --shell \
     --keys "help;uname;mem;ps;test;sleep 120;shutdown" \
     --keys-after "[init] 全部通过"
 ```
@@ -43,8 +43,8 @@ make image
 `--mode full-boot` 从**第一条 BIOS 指令**开始跑：INT 13h 读盘 → MBR → stage2
 （A20/E820/ELF 装载/建页表）→ 长模式 → 内核 banner → boot_info → PMM/VMM/堆
 → 9 项自检 → 抢占调度演示 → ATA/FYXFS → 从 `/bin/init` 装载用户 init
-（ring 3、文件 I/O、fork/exec/wait、管道）→ Shell → 正常关机。
-`--keys-after` 确保键盘脚本在 init 完成后才注入。
+（ring 3、文件 I/O、fork/exec/wait、管道）→ 自动桌面 → Q 进入救援 Shell → 正常关机。
+`--keys-after` 确保键盘脚本在 init 完成后才注入；`--shell` 明确模拟 Q。
 
 ---
 
@@ -114,16 +114,18 @@ Win32 服务子集。listen/server、自适应 RTO、
 
 ### 阶段 J — 图形栈与桌面
 
-**当前实现（已实跑通过）**：`kernel/drivers/bga.c` 在运行时探测 BGA，设置
-800×600×32 并通过 VMM 映射 `0xE0000000` LFB；`kernel/gfx/gfx.c` 提供连续物理
-背 buffer、裁剪光栅基元、内置 5×7 字体和 present/FNV-1a；`desktop.c` 实现三
-个重叠窗口、焦点 z-order、明暗主题、dock 与 N/T/R/Q 键盘交互。full-boot、
-quick、PNG 像素和 guest/host 帧校验均已接入验收，详见
+**当前实现（已实跑通过）**：stage2 通过 VBE 枚举并设置 800×600×32 LFB，
+`kernel/drivers/vbe.c` 映射 `boot_info` 中的物理帧缓冲；`bga.c` 保留运行时
+探测回退。`kernel/gfx/gfx.c` 提供连续物理背 buffer、裁剪光栅基元、内置
+5×7 字体和 present/FNV-1a；`desktop.c` 实现三个重叠窗口、焦点 z-order、
+明暗主题、dock 与 N/T/R/Q 键盘交互。RAW 与 Live ISO 正常启动均自动进入桌面，
+Q/Esc 才进入救援 Shell。full-boot 验证 VBE、quick 验证 BGA，ISO/PNG 像素和
+guest/host 帧校验均已接入验收，详见
 [`docs/design/graphics.md`](design/graphics.md)。
 
 **仍未完成**：
 
-- 显示：GOP/VBE 启动期 framebuffer、多显示器、模式枚举与热插拔
+- 显示：UEFI GOP、多显示器、运行时模式切换与热插拔
 - 合成器：**FyxWay** 用户态协议、窗口管理和真正的客户端生态
 - 渲染：GPU/Vulkan 后端、DMA-buf、垂直同步和 120Hz 验证
 - 界面语言：**FyxUI** 声明式组件、亚像素抗锯齿、完整 Unicode/输入法
