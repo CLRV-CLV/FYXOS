@@ -1,7 +1,7 @@
 # FYXOS VMware 桌面 Live ISO
 
-预发布 **`v0.1.0-desktop-pre1`** 由 `.github/workflows/desktop-prerelease.yml`
-从源码构建；ISO 同时作为 Actions artifact 和 GitHub 预发布附件提供。
+预发布 **`v0.1.0-desktop-pre1`** 的 ISO、截图、校验和与测试日志版本化在
+`release/` 中，预发布页面提供对应标签内文件的直接下载链接。
 
 ## 成品与构建
 

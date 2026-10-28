@@ -4,10 +4,12 @@
 
 ### 直接下载
 
-- **FYXOS-VMware-Desktop.iso** — 33 MB 自包含 Live ISO，正常启动自动进入 800×600 图形桌面，不要求先使用 Shell。
-- **FYXOS-Desktop.png** — 从客户机实际 framebuffer 导出的桌面截图。
-- **SHA256SUMS.txt** — ISO 与截图的 SHA-256。
-- **full-test.log** — 本次提交的干净完整回归日志。
+- **[下载 FYXOS VMware Desktop ISO](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-desktop-pre1/release/fyxos-0.1.0-desktop-pre1-x86_64.iso?raw=true)** — 自包含 Live ISO，正常启动自动进入 800×600 图形桌面，不要求先使用 Shell。
+- [实际桌面截图](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-desktop-pre1/release/fyxos-0.1.0-desktop-pre1.png)
+- [SHA-256 校验和](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-desktop-pre1/release/DESKTOP_PREVIEW_1_SHA256SUMS.txt)
+- [干净完整回归日志](https://github.com/CLRV-CLV/FYXOS/blob/v0.1.0-desktop-pre1/release/fyxos-0.1.0-desktop-pre1-full-test.log)
+
+ISO 直接版本化在上述标签中；它是可下载的产品文件，不谎称是独立的 release asset。当前 GitHub 连接缺少 workflow 写入权限，Actions 构建待权限恢复后启用。
 
 ### VMware 使用
 
@@ -22,10 +24,10 @@
 - BIOS stage2 VBE 800×600×32 DirectColor LFB 枚举、设置与 `boot_info` 交接。
 - 内核 VBE NOCACHE 映射，BGA 作为无 VBE 时的回退。
 - RAW 与 Live ISO 的正常启动均默认进入桌面。
-- GitHub Actions 从源码构建 ISO，验证 ATAPI/ring3/Live RAM overlay，并发布真实 ISO 附件。
+- `make deliver-iso` 可从源码重现根目录 ISO；`make test-iso` 验证 ATAPI、ring3、Live RAM overlay 与真实 framebuffer。
 
 ### 验证与边界
 
-CI 先执行 `make test-iso`，再执行干净 `make test`；完整回归成功后才创建预发布。framebuffer PNG 与 guest/host 校验和必须一致。
+发布前执行 `make test-iso` 和干净 `make test`；完整日志随标签提供。framebuffer PNG 与 guest/host 校验和必须一致。
 
 当前验证环境是 Unicorn BIOS/VBE/ATAPI 台架，**尚未在 VMware 本体实测**。仅支持 Legacy BIOS 与 primary-master ATAPI；尚无 UEFI、SATA/AHCI、VMware SVGA II 原生驱动、鼠标、GPU/Vulkan 或 VMware 默认网卡驱动。Live 写入仅进入 RAM overlay，重启后丢失。

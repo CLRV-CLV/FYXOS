@@ -1,0 +1,4 @@
+ec2c021ad879c102458609f4d497807163c58bfc00c2cebdb8cc86dfc5e0cb65  fyxos-0.1.0-desktop-pre1-x86_64.iso
+f5e0eb7e891223ca801ac23077d3b6a94d8c4528f36ef968b2648169b1a1402c  fyxos-0.1.0-desktop-pre1.png
+febecdc0d13e9f71e5e2b153fd291ba2163835f498ea310c2c921497097a5299  fyxos-0.1.0-desktop-pre1-full-test.log
+e0ee9c179e4b160be86c9b9c40a3c096e50efae00d42911a3ea103ac34ff91ce  DESKTOP_PREVIEW_1.md
